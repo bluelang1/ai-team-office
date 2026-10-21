@@ -4,7 +4,8 @@
 //
 //   PreToolUse tool=AskUserQuestion           -> kind ask     HIGH  text = ask | target
 //   PermissionRequest                         -> kind perm    HIGH  text = ask | `${tool} ${target}`
-//   Notification permission_prompt|idle_prompt-> kind notify  HIGH  text = msg (keeps an earlier HIGH entry's text)
+//   Notification permission_prompt|idle_prompt-> kind notify  HIGH  text = msg (keeps an earlier HIGH entry's text;
+//                                                                      idle_prompt keeps an open report)
 //   Stop (main)                               -> kind report  LOW   text = '보고 드렸어요', body = msg (the final report,
 //                                                                      up to 4000 chars from the hook; absent under --redact)
 //   resolved by: the same character's next PreToolUse/PostToolUse/PostToolUseFailure (an ask entry ignores the
@@ -41,6 +42,7 @@ export function ceoStep(map, e) {
       if (e.ntype !== 'permission_prompt' && e.ntype !== 'idle_prompt') break;
       const prev = map.get(k);
       if (prev && prev.prio === HIGH) break;              // the PermissionRequest / question already says more
+      if (prev && prev.kind === 'report' && e.ntype === 'idle_prompt') break;   // the 60s idle ping after a Stop: keep the report
       const msg = s(e.msg).trim();                        // Claude Code's notification text is English; show it only if it is Korean
       open(map, e, 'notify', HIGH, /[가-힣]/.test(msg) ? msg : e.ntype === 'idle_prompt' ? '입력을 기다리고 있어요' : '승인이 필요해요');
       break;

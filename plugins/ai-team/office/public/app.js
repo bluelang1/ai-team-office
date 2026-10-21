@@ -1029,6 +1029,11 @@ fit();
 applyTheme();
 mountClock({ cal: $('cal'), clocks: [$('wclock'), $('mclock')], compact: $('ceo-date') });
 maybeBye(/[?&]bye=1/.test(location.search));
+// "(v0.2.3)" next to the title: the version the running server was started from (plugin.json), so a stale install shows.
+fetch('/healthz').then(r => (r.ok ? r.json() : null)).then(h => {
+  if (typeof h?.version !== 'string') return;
+  const el = $('ver'); el.textContent = `(v${h.version})`; el.hidden = false;
+}).catch(() => {});
 connect();
 kick();
 if (narrowMQ.matches) requestAnimationFrame(() => { stage.scrollLeft = Math.max(0, MAIN_SEAT.x * S - stage.clientWidth / 2); });

@@ -64,6 +64,7 @@ button { font: inherit; color: inherit; }
 .top { display: flex; align-items: center; gap: 12px; padding: 10px 16px 8px; flex-wrap: wrap; }
 .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 15px; letter-spacing: .02em; }
 .brand .logo { width: 24px; height: 24px; }
+.brand .ver { font-weight: 400; font-size: 12px; color: var(--muted); letter-spacing: 0; }
 .top-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 .pill { border: 0; padding: 3px 10px; font-size: 12px; font-weight: 700; cursor: pointer; }
 .pill.amber { background: var(--butter); color: #2a1a00; box-shadow: var(--px-thin); animation: blinkpill 1s steps(2) infinite; }

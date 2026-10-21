@@ -155,3 +155,13 @@ test('report block: log text reaches the DOM only through esc(); character card 
   assert.match(app, /<dt>경과<\/dt><dd class="live-elapsed"><\/dd>/);
   assert.match(app, /el\._rep === repBody \?/, 'scroll position kept only for the same report');
 });
+
+test('idle_prompt after a Stop keeps the report body (no overwrite)', () => {
+  const m = new Map();
+  ceoStep(m, { ev: 'Stop', sid: 'R', msg: '## 결과\n- 완료했어요', ts: '2026-10-21T10:00:00Z' });
+  ceoStep(m, { ev: 'Notification', sid: 'R', ntype: 'idle_prompt', msg: 'Claude is waiting for your input', ts: '2026-10-21T10:01:00Z' });
+  const [q] = ceoList(m, Date.parse('2026-10-21T10:01:00Z'));
+  assert.equal(q.kind, 'report'); assert.equal(q.body, '## 결과\n- 완료했어요');
+  ceoStep(m, { ev: 'Notification', sid: 'R', ntype: 'permission_prompt', ts: '2026-10-21T10:01:01Z' });
+  assert.equal(ceoList(m, 0)[0].kind, 'notify', 'a permission prompt still takes over');
+});

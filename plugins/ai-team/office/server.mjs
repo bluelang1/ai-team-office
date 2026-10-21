@@ -20,6 +20,8 @@ import { Relay, parseWait, hookOutput, checkCaller, execRunner, fakeAncestryRunn
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
+// Shown next to the title so a stale install is obvious at a glance; null when the manifest is missing or unreadable.
+const VERSION = (() => { try { const v = JSON.parse(fs.readFileSync(path.join(ROOT, '..', '.claude-plugin', 'plugin.json'), 'utf8')).version; return typeof v === 'string' ? v : null; } catch { return null; } })();
 const HOME = os.homedir();
 
 function parseArgs(argv) {
@@ -688,7 +690,7 @@ function handle(req, res) {
       return;
     }
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405, { Allow: 'GET, HEAD' }).end(); return; }
-    if (url.pathname === '/healthz') { res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: true, events: history.length, clients: clients.size, viewers: visibleViewers(), hiddenViewers: viewers.size - visibleViewers(), pending: relay.pending.size, usage: usage ? usage.records.size : null })); return; }
+    if (url.pathname === '/healthz') { res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: true, version: VERSION, events: history.length, clients: clients.size, viewers: visibleViewers(), hiddenViewers: viewers.size - visibleViewers(), pending: relay.pending.size, usage: usage ? usage.records.size : null })); return; }
     serveStatic(req, res, url);
   } catch (err) { log('request error', err.message); try { res.writeHead(500).end(); } catch {} }
 }

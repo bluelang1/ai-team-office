@@ -27,3 +27,7 @@
 - Fix: sent-back reports no longer reappear after reconnect; card no longer re-renders every second
 - Hook: keep up to 4000 chars of the final message on Stop/SubagentStop; bound non-string values
 - Add CLAUDE.md contributor guide
+
+## 0.2.3 — 2026-10-21
+- CEO room: the idle ping ~60s after a turn ends no longer replaces the open report card (report body stays visible)
+- Header shows the running version, e.g. `AI Team Office (v0.2.3)`, read from `plugin.json` via `/healthz`
