@@ -9,6 +9,8 @@
 //                                                                      courtesy that expires like a report, never "답이 필요해요")
 //   Stop (main)                               -> kind report  LOW   text = '보고 드렸어요', body = msg (the final report,
 //                                                                      up to 4000 chars from the hook; absent under --redact)
+//   RelayDecided (server, from ceo-decisions.jsonl: answered in the dashboard) -> resolves; the permission_prompt
+//                                              Notification that may still follow does not reopen it
 //   resolved by: the same character's next PreToolUse/PostToolUse/PostToolUseFailure (an ask entry ignores the
 //   AskUserQuestion PreToolUse that opened it), UserPromptSubmit or SessionEnd on that sid, SubagentStop of that aid.
 
@@ -16,6 +18,8 @@ export const HIGH = 'high', LOW = 'low';
 const keyOf = e => `${e.sid}|${e.aid || 'main'}`;
 const s = v => (typeof v === 'string' ? v : v == null ? '' : typeof v === 'number' ? String(v) : '');
 const tsOf = e => { const t = Date.parse(s(e.ts)); return Number.isFinite(t) ? t : 0; };
+const decided = new WeakMap();                          // map -> Set of keys answered in the dashboard, until they move on
+const decidedOf = map => { let d = decided.get(map); if (!d) decided.set(map, d = new Set()); return d; };
 
 function open(map, e, kind, prio, text, body = '') {
   const k = keyOf(e), prev = map.get(k);
@@ -32,7 +36,9 @@ export function ceoStep(map, e) {
   const drop = key => { if (map.delete(key)) resolved.push(key); };
   const dropSid = () => { for (const key of [...map.keys()]) if (key.startsWith(`${e.sid}|`)) drop(key); };
   const ask = s(e.ask).trim();
+  if (e.ev !== 'Notification' && e.ev !== 'RelayDecided') decidedOf(map).delete(k);
   switch (e.ev) {
+    case 'RelayDecided': drop(k); decidedOf(map).add(k); break;
     case 'PreToolUse':
       if (e.tool === 'AskUserQuestion') open(map, e, 'ask', HIGH, ask || s(e.target).trim() || '질문이 있어요');
       else drop(k);
@@ -43,6 +49,7 @@ export function ceoStep(map, e) {
       if (e.ntype !== 'permission_prompt' && e.ntype !== 'idle_prompt') break;
       const prev = map.get(k);
       if (prev && prev.prio === HIGH) break;              // the PermissionRequest / question already says more
+      if (decidedOf(map).has(k) && e.ntype === 'permission_prompt') break;   // already answered in the dashboard
       const msg = s(e.msg).trim();                        // Claude Code's notification text is English; show it only if it is Korean
       if (e.ntype === 'idle_prompt') {                    // "the session sits idle" is not a question to the 대표: never HIGH,
         if (!prev) open(map, e, 'idle', LOW, '입력을 기다리고 있어요');   // and the 60s ping after a Stop keeps the report
@@ -52,7 +59,7 @@ export function ceoStep(map, e) {
       break;
     }
     case 'Stop': if (!e.aid) { drop(k); open(map, e, 'report', LOW, '보고 드렸어요', s(e.msg).trim()); } break;
-    case 'UserPromptSubmit': case 'SessionEnd': dropSid(); break;
+    case 'UserPromptSubmit': case 'SessionEnd': dropSid(); for (const key of [...decidedOf(map)]) if (key.startsWith(`${e.sid}|`)) decidedOf(map).delete(key); break;
     case 'SubagentStop': drop(k); break;
     default: break;
   }
@@ -61,6 +68,9 @@ export function ceoStep(map, e) {
 
 /** The human answered `key` outside the event stream (dashboard relay, or the simulator's local answer): the
  *  character leaves the line now instead of waiting for its next tool event. Returns the resolved keys. */
+/** Forget per-map state kept beside the entries (call together with map.clear()). */
+export function ceoReset(map) { map.clear(); decidedOf(map).clear(); }
+
 export function ceoResolve(map, key) { return key && map.delete(key) ? [key] : []; }
 
 /** A LOW report ("보고 드렸어요") is a courtesy, not a question: after `ms` the 실장 bows and goes back to work

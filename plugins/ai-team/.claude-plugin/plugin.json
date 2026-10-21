@@ -1,7 +1,7 @@
 {
   "name": "ai-team",
   "displayName": "AI Team",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "Model-routed AI team for Claude Code: a Fable/Opus main that plans and verifies, cheaper subagents that do the work, a delegation log with verdicts, and a real-time pixel office dashboard.",
   "author": {
     "name": "bluelang1",

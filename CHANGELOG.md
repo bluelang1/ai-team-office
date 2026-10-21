@@ -41,3 +41,6 @@
 ## 0.2.5 — 2026-10-21
 - Tests: closing the visible tab with a hidden one open releases only questions; `not relayed` log line (control characters masked); `staleBoot` reload rule
 - Docs: DESIGN-v2 relay hold rules and idle card; CLAUDE.md commands and gotchas
+
+## 0.2.6 — 2026-10-21
+- CEO room: a dashboard answer is now part of the event history (`RelayDecided`, from `ceo-decisions.jsonl`), so after a reload or restart an approved, still-running command no longer comes back as a "답이 필요해요" card without buttons; a late permission_prompt does not reopen it

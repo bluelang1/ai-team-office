@@ -180,3 +180,33 @@ test('staleBoot: reload only when both boot ids are known and differ', () => {
   for (const [a, b] of [[undefined, 'bbbb'], ['aaaa', undefined], ['', 'bbbb'], ['aaaa', 7], [null, null]])
     assert.equal(staleBoot(a, b), false, `no reload for ${JSON.stringify([a, b])}`);
 });
+
+test('RelayDecided (answered in the dashboard) resolves the card; a late permission_prompt does not reopen it', () => {
+  const m = new Map();
+  ceoStep(m, { ev: 'PermissionRequest', sid: 'D', tool: 'Bash', target: 'long job', ts: '2026-10-21T10:00:00Z' });
+  ceoStep(m, { ev: 'RelayDecided', sid: 'D', tool: 'Bash', answer: 'allow', ts: '2026-10-21T10:00:03Z' });
+  ceoStep(m, { ev: 'Notification', sid: 'D', ntype: 'permission_prompt', ts: '2026-10-21T10:00:06Z' });
+  assert.equal(m.size, 0, 'the approved command is running: nobody waits');
+  ceoStep(m, { ev: 'PostToolUse', sid: 'D', tool: 'Bash', ts: '2026-10-21T10:03:00Z' });
+  ceoStep(m, { ev: 'PermissionRequest', sid: 'D', tool: 'Bash', ts: '2026-10-21T10:03:01Z' });
+  ceoStep(m, { ev: 'Notification', sid: 'D', ntype: 'permission_prompt', ts: '2026-10-21T10:03:07Z' });
+  assert.equal(ceoList(m, 0)[0].kind, 'perm', 'the next request waits again');
+});
+
+test('reducer: RelayDecided unblocks the character in its own room, makes no new floor, survives a late permission_prompt', async () => {
+  const { reduceAll, initState } = await import('../public/reducer.js');
+  const ts = n => `2026-10-21T10:00:0${n}Z`;
+  const s = reduceAll(initState(), [
+    { ev: 'PreToolUse', sid: 'S1', proj: 'web-ui', tool: 'Bash', target: 'npm test', ts: ts(0) },
+    { ev: 'PermissionRequest', sid: 'S1', proj: 'web-ui', tool: 'Bash', target: 'npm test', ts: ts(0) },
+    { ev: 'RelayDecided', sid: 'S1', tool: 'Bash', answer: 'allow', ts: ts(2) },          // no proj (older decisions log)
+    { ev: 'Notification', sid: 'S1', proj: 'web-ui', ntype: 'permission_prompt', ts: ts(5) },
+  ]);
+  assert.deepEqual(Object.keys(s.floors), ['web-ui'], 'no ghost (unknown) floor');
+  const c = s.floors['web-ui'].rooms.S1.chars.main;
+  assert.equal(c.blocked, false); assert.notEqual(c.act, 'blocked');
+  const s2 = reduceAll(s, [{ ev: 'PostToolUse', sid: 'S1', proj: 'web-ui', tool: 'Bash', ts: ts(8) },
+    { ev: 'Notification', sid: 'S1', proj: 'web-ui', ntype: 'permission_prompt', ts: ts(9) }]);
+  assert.equal(s2.floors['web-ui'].rooms.S1.chars.main.blocked, true, 'a later prompt blocks again');
+  assert.equal(reduceAll(initState(), [{ ev: 'RelayDecided', sid: 'S9', answer: 'allow', ts: ts(1) }]).floors['(unknown)'], undefined, 'unknown sid: nothing created');
+});

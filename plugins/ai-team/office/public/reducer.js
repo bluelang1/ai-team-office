@@ -206,17 +206,33 @@ function applyDelegation(s, e, ms) {
   pushTicker(s, ms, e, 'Fable', `판정 ${e.verdict.toUpperCase()} · ${e.ref.slice(0, 4)}`, 'verdict');
 }
 
+/** Answered in the 대표실 (server event from ceo-decisions.jsonl): unblock that character in the room it already has
+ *  (never creates a floor or a character), and ignore the permission_prompt Notification that may still follow
+ *  until its next event. */
+function applyDecided(s, e, ms) {
+  let c = null;
+  for (const f of Object.values(s.floors)) { const r = f.rooms[e.sid]; if (r && r.chars[e.aid || 'main']) { c = r.chars[e.aid || 'main']; break; } }
+  if (!c) return;
+  c.blocked = false; c.relayDecided = true;
+  if (c.act === 'blocked') { const room = classify(c.tool, c.target); setPlace(s, c, room, ACT[room]); }   // the approved tool runs now
+  const who = c.aid ? `${c.atype}·${c.aid.slice(0, 4)}` : 'Fable';
+  pushTicker(s, ms, e, who, tickerText(e), e.ev);
+}
+
 function apply(s, e) {
   const ms = tsOf(e);
   s.now = Math.max(s.now, ms);
   s.stats.events++;
   if (typeof e.event === 'string' && typeof e.ev !== 'string') return applyDelegation(s, e, ms);
+  if (e.ev === 'RelayDecided') return applyDecided(s, e, ms);
   const r = roomFor(s, e, ms), key = e.aid || 'main';
   const c = r.chars[key] ||= newChar(s, r, e, ms);
   const late = ms < c.lastTs, lifecycle = e.ev === 'SubagentStart' || e.ev === 'SubagentStop';
   if (!late) c.lastTs = ms;
   if (e.effort) c.effort = e.effort;
   if (e.atype && c.aid) c.atype = e.atype;
+  const decidedHere = c.relayDecided && e.ev === 'Notification' && e.ntype === 'permission_prompt';
+  if (e.ev !== 'Notification') c.relayDecided = false;
   const who = c.aid ? `${c.atype}·${c.aid.slice(0, 4)}` : 'Fable';
   const sub = e.sub && typeof e.sub === 'object' ? e.sub : null;
 
@@ -269,7 +285,7 @@ function apply(s, e) {
     case 'PostToolUseFailure': clearBlock(); c.phase = 'between'; c.failedAt = ms; c.flash = true; c.failCount++; break;
     case 'PermissionRequest': c.blocked = true; c.obs = 'observed'; if (e.target) c.target = e.target; setPlace(s, c, 'desk', 'blocked'); break;
     case 'Notification':
-      if (e.ntype === 'permission_prompt') { c.blocked = true; setPlace(s, c, 'desk', 'blocked'); }
+      if (e.ntype === 'permission_prompt') { if (!decidedHere) { c.blocked = true; setPlace(s, c, 'desk', 'blocked'); } }
       else if (e.ntype === 'idle_prompt') { c.phase = 'idle'; setPlace(s, c, 'desk', 'idle'); }
       break;
     case 'Stop': clearBlock(); c.phase = 'idle'; c.obs = 'observed'; c.msg = typeof e.msg === 'string' && e.msg ? e.msg : null; setPlace(s, c, 'desk', 'idle'); break;
@@ -298,6 +314,7 @@ function tickerText(e) {
     case 'SubagentStart': return '엘리베이터 도착';
     case 'SubagentStop': return '작업 끝, 퇴장';
     case 'Stop': return '턴 종료, 대기';
+    case 'RelayDecided': return `대표실 ${e.answer === 'allow' ? '승인' : e.answer === 'deny' ? '거부' : '답변'}${e.tool ? ` ${e.tool}` : ''}`;
     default: return e.ev;
   }
 }

@@ -11,7 +11,7 @@ import { SeatBook } from './seats.js';
 import { displayName, lookOf, rankOf, jobOf, JOB_LONG, nickname, nameFromWho, resetNames, ACT_KO, hash32, mainTitle } from './roles.js';
 import { layoutFloors, mountBuilding, renderOverview, elevatorFx } from './building.js';
 import { openFloorEditor } from './editor.js';
-import { ceoStep, ceoList, ceoResolve, ceoExpire, HIGH, dismissKey, visibleQueue, releasePlan, DismissStore, ceoSpots, reportText } from './ceo.js';
+import { ceoStep, ceoList, ceoResolve, ceoReset, ceoExpire, HIGH, dismissKey, visibleQueue, releasePlan, DismissStore, ceoSpots, reportText } from './ceo.js';
 import { Usage, bindTips, usageSummaryHTML, detailHTML } from './charts.js';
 import { applyFrame, sweep, resetRelay, mergeQueue, relayHTML, relayLive, onRelayClick, onRelayInput, decidedKey, keyOfRelay, releaseRelay, officeHeaders, staleBoot } from './ceocard.js';
 import * as sim from './sim.js';
@@ -109,7 +109,7 @@ function setConn(st, text) { const el = $('conn'); el.dataset.state = st; el.tex
 let es = null, dayEnd = 0;
 function resetView() {
   state = initState(); queue = []; clearSprites(); lastTickerSeq = 0; $('ticker').textContent = '';
-  usage.reset(); waiting.clear(); bows.clear(); decided.clear(); resetRelay(); lastList = []; queueKeys = new Set(); counts.clear(); projSeen.length = 0; projSet.clear(); resetNames();
+  usage.reset(); ceoReset(waiting); bows.clear(); decided.clear(); resetRelay(); lastList = []; queueKeys = new Set(); counts.clear(); projSeen.length = 0; projSet.clear(); resetNames();
   ui.live = false; stopSim?.(); stopSim = null; dirtyAll();
 }
 // Viewer id for this page: lets POST /viewer say "this tab is hidden" so a background tab does not hold relay items.

@@ -257,6 +257,7 @@ export class Relay {
     if (d && this.redact) d = d.answers ? { answered: Object.keys(d.answers).length } : { behavior: d.behavior };
     const line = { ts: new Date(this.now()).toISOString(), id: item.id, sid: item.sid, tool: item.tool, kind: item.kind, by, decision: d || null };
     if (item.aid) line.aid = item.aid;
+    if (item.proj) line.proj = item.proj;
     if (reason) line.reason = reason;
     try {
       fs.mkdirSync(path.dirname(this.logFile), { recursive: true });

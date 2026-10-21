@@ -272,15 +272,24 @@ class Tail {
   }
 }
 
+/** A ceo-decisions.jsonl line -> office event `RelayDecided` {sid, aid, tool, answer: allow|deny|answered}, only for
+ *  answers given in the dashboard. In the history, a page that reloads (or opens after a restart) sees the request as
+ *  decided instead of bringing back a card with no buttons while the approved command is still running. */
+function decisionEvent(d) {
+  if (!d || d.by !== 'dashboard' || !d.decision || typeof d.sid !== 'string') return null;
+  const answer = d.decision.behavior === 'allow' || d.decision.behavior === 'deny' ? d.decision.behavior : 'answered';
+  return { ts: d.ts, ev: 'RelayDecided', sid: d.sid, ...(d.aid ? { aid: d.aid } : {}), ...(d.tool ? { tool: d.tool } : {}), ...(typeof d.proj === 'string' && d.proj ? { proj: d.proj } : {}), answer };
+}
+
 function startLive() {
-  const files = ['office-events.jsonl', 'delegation.jsonl'].map(f => path.join(opt.logs, f));
-  const tails = files.map((f, i) => new Tail(f, evs => {
-    const sorted = byTs(evs);
+  const files = ['office-events.jsonl', 'delegation.jsonl', 'ceo-decisions.jsonl'].map(f => path.join(opt.logs, f));
+  const tails = files.map((f, i) => new Tail(f, raw => {
+    const sorted = byTs(i === 2 ? raw.map(decisionEvent).filter(Boolean) : raw);
     sorted.forEach(emit);
     // Live office-events lines tell the relay when the terminal answered first (or the session moved on).
     if (i === 0) for (const e of sorted) { try { relay.observe(norm(e)); } catch (err) { log('relay observe:', err.message); } }
   }));
-  byTs(tails.flatMap(t => t.initial())).forEach(emit);
+  byTs(tails.flatMap((t, i) => (i === 2 ? t.initial().map(decisionEvent).filter(Boolean) : t.initial()))).forEach(emit);
   log(`replayed ${history.length} of today's events from ${opt.logs}`);
   const checkAll = () => tails.forEach(t => t.check());
   let watching = false;

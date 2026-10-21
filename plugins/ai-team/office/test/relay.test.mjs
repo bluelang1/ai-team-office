@@ -604,3 +604,21 @@ test('live: a request nobody can hold is logged once with the reason (control ch
   assert.ok(!out.includes('\u001b'), 'no raw escape reaches the log');
   bg.close();
 });
+
+test('live: a dashboard answer becomes a RelayDecided event in the history (a reload does not bring the card back)', async () => {
+  const logs = fs.mkdtempSync(path.join(tmp, 'decided-'));
+  const port = await startServer(['--logs', logs]);
+  const v = await viewer(port);
+  const p = ask(port, permInput(), 5000);
+  const { item } = await v.waitFor(f => f.type === 'ask');
+  assert.equal((await answer(port, item.id, { behavior: 'allow' })).status, 200);
+  await p;
+  const until = Date.now() + 3000;
+  while (!v.raw.includes('"ev":"RelayDecided"') && Date.now() < until) await new Promise(r => setTimeout(r, 50));
+  const ev = JSON.parse(/data: (\{[^\n]*"ev":"RelayDecided"[^\n]*\})/.exec(v.raw)[1]);
+  assert.deepEqual([ev.sid, ev.tool, ev.answer], [SID, 'Bash', 'allow']);
+  v.close();
+  const v2 = await viewer(port);                          // a reload replays it
+  assert.ok(v2.raw.includes('"ev":"RelayDecided"'));
+  v2.close();
+});
