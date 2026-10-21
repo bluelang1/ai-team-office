@@ -170,8 +170,8 @@ Claude Code 가 사람에게 묻는 두 가지 — 권한 확인(`PermissionRequ
 | 대표실에서 승인/거부/답변 | 훅이 결정 JSON 출력. 카드 `answered`(by dashboard). 두 번째 답은 409 |
 | 대기 시간 초과 | 훅 출력 없음 → 터미널 프롬프트. 카드 `resolved`(by terminal, reason timeout) |
 | 터미널에서 먼저 답함 | Claude Code 가 훅을 끝내면 연결이 끊겨 `withdrawn`. 훅이 남아 있어도 같은 세션·같은 에이전트의 `PostToolUse`/`PostToolUseFailure`/`PermissionDenied`(같은 도구·같은 target, 질문은 같은 `tool_use_id`), 그 세션의 `UserPromptSubmit`/`SessionEnd`, 그 에이전트의 `Stop`/`SubagentStop` 이 office-events 에 찍히면 `resolved`(by terminal) 로 닫고 훅은 빈 출력 |
-| 대시보드 탭이 하나도 안 열려 있음(또는 전부 백그라운드) | 즉시 "결정 없음"(`reason: no-viewer`) — 아무도 안 보는데 프롬프트를 붙잡지 않는다. "대시보드" = `Origin` 또는 `Referer` 가 이 서버 자신(loopback, 같은 포트)인 `/events` 연결(브라우저 EventSource 는 보내고 curl 은 안 보냄) 중 **보이는** 것. 탭이 숨겨지면 페이지가 `POST /viewer {vid, visible:false}` 를 보내 세지 않게 한다. 다른 SSE 리더는 이벤트는 받아도 대시보드로 세지 않는다 |
-| 마지막으로 보이던 대시보드 탭이 닫히거나 백그라운드로 감 | 대기 중 항목 전부 즉시 `resolved`(by/reason `no-viewer`), 훅은 빈 출력 → 터미널 프롬프트. 새로고침도 순간 0 이 되므로 대기 항목이 풀린다 |
+| 대시보드 탭이 하나도 안 열려 있음 (질문은: 보이는 탭이 없음) | 즉시 "결정 없음"(`reason: no-viewer`) — 아무도 안 보는데 프롬프트를 붙잡지 않는다. "대시보드" = `Origin` 또는 `Referer` 가 이 서버 자신(loopback, 같은 포트)인 `/events` 연결(브라우저 EventSource 는 보내고 curl 은 안 보냄). **권한 요청**은 터미널 프롬프트가 훅과 동시에 떠 있으므로 백그라운드 탭이라도 열려 있으면 붙잡는다(터미널에서 일하다 나중에 대표실에서 승인 가능, 터미널에서 먼저 답해도 됨). **질문**(`PreToolUse`)은 훅이 끝나야 터미널 질문 창이 뜨므로 **보이는** 탭이 있을 때만 붙잡는다. 탭이 숨겨지면 페이지가 `POST /viewer {vid, visible:false}` 를 보낸다. 다른 SSE 리더는 대시보드로 세지 않는다. 넘긴 경우 서버 로그에 `not relayed: …` 한 줄을 남긴다 |
+| 마지막으로 보이던 탭이 백그라운드로 감 / 마지막 탭이 닫힘 | 백그라운드: 대기 중 **질문**만 `resolved`(no-viewer). 닫힘: 전부 `resolved`(no-viewer), 훅은 빈 출력 → 터미널 프롬프트. 닫힘은 5초 유예 뒤에 판단하므로 새로고침(닫혔다 바로 다시 연결)은 대기 항목을 풀지 않는다(`OFFICE_VIEWER_GRACE_MS`). 서버가 재시작되면 열린 페이지는 `ready.boot` 가 바뀐 것을 보고 새로고침해 새 토큰을 받는다(옛 토큰으로는 답이 403) |
 | 훅이 이미 끝났는데 대표실에서 답함 | 410 `the hook that asked is gone …` — 아무에게도 전달되지 않는 답을 성공으로 보이지 않는다 |
 
 **질문(AskUserQuestion)은 대기 중 터미널이 막힌다.** `PreToolUse` 훅은 도구 실행 *전*에 돌기 때문에, 훅이 기다리는 동안 터미널엔 질문 UI 가 아직 안 뜬다. 대기 시간이 지나야(또는 Esc 로 중단해야) 터미널에서 답할 수 있다. 그래서 `OFFICE_RELAY_QUESTION_WAIT_MS` 를 짧게(예: 60000) 두는 것을 권한다. 권한 확인 대화상자가 훅 대기 중에 함께 뜨는지는 문서에 명시가 없다 — 어느 쪽이든 위 규칙으로 정리된다.

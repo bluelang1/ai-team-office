@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { ceoStep, ceoList, ceoResolve, reportText, releasePlan, CEO_PLAN, LOW, visibleQueue, DismissStore } from '../public/ceo.js';
+import { ceoStep, ceoList, ceoResolve, ceoExpire, reportText, releasePlan, CEO_PLAN, LOW, visibleQueue, DismissStore } from '../public/ceo.js';
 import { applyFrame, mergeQueue, decidedKey, resetRelay } from '../public/ceocard.js';
 import { drawChar, EXEC, SW, SH } from '../public/sprites.js';
 import { redact } from '../server.mjs';
@@ -164,4 +164,12 @@ test('idle_prompt after a Stop keeps the report body (no overwrite)', () => {
   assert.equal(q.kind, 'report'); assert.equal(q.body, '## 결과\n- 완료했어요');
   ceoStep(m, { ev: 'Notification', sid: 'R', ntype: 'permission_prompt', ts: '2026-10-21T10:01:01Z' });
   assert.equal(ceoList(m, 0)[0].kind, 'notify', 'a permission prompt still takes over');
+});
+
+test('idle_prompt alone is a LOW courtesy that expires (not "답이 필요해요")', () => {
+  const m = new Map();
+  ceoStep(m, { ev: 'Notification', sid: 'I', ntype: 'idle_prompt', msg: 'Claude is waiting for your input', ts: '2026-10-21T10:00:00Z' });
+  const [q] = ceoList(m, 0);
+  assert.equal(q.kind, 'idle'); assert.equal(q.prio, LOW); assert.equal(q.text, '입력을 기다리고 있어요');
+  assert.deepEqual(ceoExpire(m, Date.parse('2026-10-21T10:01:31Z')), ['I|main']);
 });

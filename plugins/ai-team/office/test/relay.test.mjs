@@ -158,7 +158,7 @@ test('Relay.answer: 410 when the hook connection is gone (alive() false, or alre
 const BROWSER_TREE = 'Google Chrome,launchd', AGENT_TREE = 'curl,zsh,claude,zsh,Terminal';
 function startServer(args, tree = BROWSER_TREE) {
   const p = spawn(process.execPath, [SERVER, '--port', '0', '--no-usage', ...args],
-    { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, OFFICE_TEST_ANCESTRY: tree } });
+    { stdio: ['ignore', 'pipe', 'pipe'], env: { OFFICE_VIEWER_GRACE_MS: '300', ...process.env, OFFICE_TEST_ANCESTRY: tree } });
   procs.push(p);
   return new Promise((resolve, reject) => {
     let out = '';
@@ -513,14 +513,19 @@ test('live: answer/release/pending need own Origin + token; an agent process tre
   assert.equal((await ap).json.decision, null, 'closing the dashboard releases it with no decision');
 });
 
-test('live: a hidden tab is not a viewer; the last visible one hiding releases pending as no-viewer', async () => {
+test('live: a hidden tab holds permissions but not questions; hiding releases questions, closing releases all', async () => {
   const port = await startServer(['--logs', fs.mkdtempSync(path.join(tmp, 'vis-'))]);
   const ref = { Referer: `http://127.0.0.1:${port}/` };
   const health = async () => JSON.parse((await call(port, { path: '/healthz' })).body);
   const setVis = async (vid, visible, headers) => call(port, { method: 'POST', path: '/viewer', body: { vid, visible }, headers: headers ?? await dash(port) });
   const bg = await viewer(port, ref, '/events?vid=tab-background-1&visible=0');      // opened already hidden
   assert.deepEqual([(await health()).viewers, (await health()).hiddenViewers], [0, 1]);
-  assert.deepEqual((await ask(port, permInput(), 5000)).json, { id: null, decision: null, reason: 'no-viewer' }, 'a hidden tab holds nothing');
+  assert.deepEqual((await ask(port, askInput(), 5000)).json, { id: null, decision: null, reason: 'no-viewer' }, 'a hidden tab holds no question');
+  const held = ask(port, permInput(), 5000);              // the terminal prompt runs alongside: a background tab may hold it
+  const { item: hItem } = await bg.waitFor(f => f.type === 'ask');
+  assert.equal(hItem.kind, 'permission');
+  assert.equal((await answer(port, hItem.id, { behavior: 'allow' }, await dash(port))).status, 200, 'answerable from the background tab');
+  assert.equal((await held).json.decision.behavior, 'allow');
 
   const fg = await viewer(port, ref, '/events?vid=tab-foreground-1');
   assert.equal((await health()).viewers, 1);
@@ -531,12 +536,39 @@ test('live: a hidden tab is not a viewer; the last visible one hiding releases p
 
   const p = ask(port, permInput(), 5000);
   const { item } = await fg.waitFor(f => f.type === 'ask');
+  const q = ask(port, askInput(), 5000);
+  const { item: qItem } = await fg.waitFor(f => f.type === 'ask' && f.item.kind === 'question');
   assert.equal((await setVis('tab-background-1', true)).status, 200);
   assert.equal((await setVis('tab-foreground-1', false)).json.viewers, 1, 'the other tab is visible now');
-  assert.equal((await pendingList(port)).json.length, 1);
+  assert.equal((await pendingList(port)).json.length, 2);
   assert.deepEqual((await setVis('tab-background-1', false)).json, { ok: true, visible: false, viewers: 0 });
-  assert.deepEqual((await p).json, { id: item.id, kind: 'permission', decision: null, by: 'no-viewer' });
-  assert.deepEqual(await fg.waitFor(f => f.type === 'resolved'), { type: 'resolved', id: item.id, by: 'no-viewer', reason: 'no-viewer' });
+  assert.deepEqual((await q).json, { id: qItem.id, kind: 'question', decision: null, by: 'no-viewer' }, 'the question goes back to the terminal');
+  assert.equal((await pendingList(port)).json.length, 1, 'the permission stays answerable');
   assert.equal((await setVis('tab-foreground-1', true)).json.viewers, 1, 'coming back counts again');
   bg.close(); fg.close();
+  assert.deepEqual((await p).json, { id: item.id, kind: 'permission', decision: null, by: 'no-viewer' }, 'no dashboard open at all: released');
+});
+
+test('live: the page and `ready` carry the same boot id (a page left open across a restart reloads for a new token)', async () => {
+  const port = await startServer(['--logs', fs.mkdtempSync(path.join(tmp, 'boot-'))]);
+  const meta = /<meta name="office-boot" content="([0-9a-f]{16})">/.exec((await call(port, { path: '/' })).body)?.[1];
+  const v = await viewer(port);
+  const ready = JSON.parse(/event: ready\ndata: (.*)\n/.exec(v.raw)[1]);
+  assert.ok(meta); assert.equal(ready.boot, meta);
+  assert.ok(!v.raw.includes(await tokenOf(port)), 'the token itself never goes on the stream');
+  v.close();
+});
+
+test('live: a reload (tab closes, a new one connects within the grace) keeps pending items', async () => {
+  const port = await startServer(['--logs', fs.mkdtempSync(path.join(tmp, 'grace-'))]);
+  const v1 = await viewer(port);
+  const p = ask(port, permInput(), 5000);
+  const { item } = await v1.waitFor(f => f.type === 'ask');
+  v1.close();
+  const v2 = await viewer(port);                          // the reloaded page, well inside the 300ms test grace
+  await new Promise(r => setTimeout(r, 500));
+  assert.equal((await pendingList(port)).json.length, 1, 'still waiting after the grace');
+  assert.equal((await answer(port, item.id, { behavior: 'allow' })).status, 200);
+  assert.equal((await p).json.decision.behavior, 'allow');
+  v2.close();
 });

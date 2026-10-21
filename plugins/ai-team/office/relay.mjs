@@ -209,10 +209,10 @@ export class Relay {
   /** The hook's HTTP request went away (hook killed / Claude Code moved on). */
   withdraw(id) { return this.finish(id, 'withdrawn', null); }
 
-  /** The last dashboard closed: nobody can answer, so every pending item ends now with no decision. */
-  releaseAll(reason = 'no-viewer') {
+  /** Nobody can answer: pending items (all, or only those of `kind`) end now with no decision. */
+  releaseAll(reason = 'no-viewer', kind = null) {
     let n = 0;
-    for (const id of [...this.pending.keys()]) if (this.finish(id, reason, null, reason)) n++;
+    for (const [id, p] of [...this.pending]) if ((!kind || p.item.kind === kind) && this.finish(id, reason, null, reason)) n++;
     return n;
   }
 

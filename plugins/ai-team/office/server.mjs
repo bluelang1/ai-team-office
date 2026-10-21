@@ -107,15 +107,26 @@ const clients = new Set();
  *  {visible:false} via POST /viewer and stops counting. res.vid = the page's viewer id, res.visible = its state. */
 const viewers = new Set();
 const visibleViewers = () => { let n = 0; for (const r of viewers) if (r.visible !== false) n++; return n; };
+/** Who must be watching for an item to wait. A permission prompt shows in the terminal at the same time as the hook
+ *  runs (the terminal can answer first), so any open dashboard, even a background tab, may hold it: the user usually
+ *  works in the terminal and looks at the 대표실 later. A question (PreToolUse) blocks the terminal dialog until the
+ *  hook returns, so it waits only while a dashboard is actually on screen. */
+/** A raw request field for one log line: strings only, printable ASCII, bounded. */
+const logSafe = (v, n) => (typeof v === 'string' ? v.slice(0, n).replace(/[^\x20-\x7e]/g, '?') : '?');
+const canHold = kind => (kind === 'permission' ? viewers.size : visibleViewers()) > 0;
+/** A closed tab is often a reload: wait this long for a dashboard to come back before releasing (env for tests). */
+const CLOSE_GRACE_MS = /^\d{1,6}$/.test(process.env.OFFICE_VIEWER_GRACE_MS || '') ? Number(process.env.OFFICE_VIEWER_GRACE_MS) : 5000;
 function releaseIfNoViewer(why) {
-  if (visibleViewers()) return;
-  const n = relay.releaseAll('no-viewer');
+  const n = viewers.size ? (visibleViewers() ? 0 : relay.releaseAll('no-viewer', 'question')) : relay.releaseAll('no-viewer');
   if (n) log(`대표실: ${why}, released ${n} pending`);
 }
 
 /** Per-process viewer token: delivered ONLY inside the served index.html (<meta name="office-token">), never on the
  *  SSE stream. answer/release/pending/viewer require it in X-Office-Token. */
 const TOKEN = crypto.randomBytes(32).toString('hex');
+/** Per-process boot id (not a secret): in index.html and in `ready`, so a page left open across a restart notices its
+ *  token is stale and reloads instead of showing answer buttons that would be refused. */
+const BOOT = crypto.randomBytes(8).toString('hex');
 const tokenOk = t => typeof t === 'string' && t.length === TOKEN.length && crypto.timingSafeEqual(Buffer.from(t), Buffer.from(TOKEN));
 
 /** Caller-process check (relay.mjs checkCaller). OFFICE_TEST_ANCESTRY="comm,comm,…" (child first) swaps in a fake
@@ -353,7 +364,7 @@ function sendBurst(res, list, useUsage = false) {
   for (let i = 0; i < recs.length; i += 1000) res.write(`event: usage-batch\ndata: ${JSON.stringify(recs.slice(i, i + 1000))}\n\n`);
   const info = { mode: opt.replay ? 'replay' : 'live', redact: opt.redact, count: list.length, dayStart: dayStart(),
     usage: !!(useUsage && usage), usageFiles: useUsage && usage ? usage.fileCount : 0, usageCount: recs.length,
-    hasPricing: !!(usage && usage.hasPricing), building: servedBuilding(), limits: limitsNow() };
+    hasPricing: !!(usage && usage.hasPricing), building: servedBuilding(), limits: limitsNow(), boot: BOOT };
   res.write(`event: ready\ndata: ${JSON.stringify(info)}\n\n`);
   res.primed = !res.writableNeedDrain;
 }
@@ -383,7 +394,11 @@ async function handleEvents(req, res, url) {
     if (vid && VID_RE.test(vid)) res.vid = vid;
     res.visible = url.searchParams.get('visible') !== '0';
     viewers.add(res);
-    res.on('close', () => { viewers.delete(res); releaseIfNoViewer('last visible dashboard closed'); });
+    res.on('close', () => {
+      viewers.delete(res);
+      // decided when the grace ends, by whoever is connected then (a reloaded page counts again)
+      setTimeout(() => releaseIfNoViewer(viewers.size ? 'last visible dashboard closed (background tabs remain)' : 'last dashboard closed'), CLOSE_GRACE_MS).unref();
+    });
   }
 }
 
@@ -443,7 +458,7 @@ function serveStatic(req, res, url) {
   fs.readFile(file, (err, buf) => {
     if (err) { res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }).end('not found'); return; }
     if (file === path.join(PUBLIC, 'index.html')) {
-      const html = buf.toString('utf8').replace('<head>', `<head>\n  <meta name="office-token" content="${TOKEN}">`);
+      const html = buf.toString('utf8').replace('<head>', `<head>\n  <meta name="office-token" content="${TOKEN}">\n  <meta name="office-boot" content="${BOOT}">`);
       res.writeHead(200, { 'Content-Type': MIME['.html'], 'Cache-Control': 'no-store', 'Referrer-Policy': 'same-origin' }).end(html);
       return;
     }
@@ -576,7 +591,10 @@ async function relayAsk(req, res, url, asHook) {
   const raw = await jsonBody(req, res, ASK_MAX);
   if (raw === undefined) return;
   const none = reason => sendJson(res, 200, asHook ? {} : { id: null, decision: null, reason });
-  if (!visibleViewers()) return none('no-viewer');
+  if (!canHold(raw?.hook_event_name === 'PermissionRequest' ? 'permission' : 'question')) {
+    log(`대표실: ${logSafe(raw?.tool_name, 40)} (${logSafe(raw?.session_id, 8)}) not relayed: ${viewers.size ? 'dashboard in the background' : 'no dashboard open'}`);
+    return none('no-viewer');
+  }
   const alive = () => !res.destroyed && !res.writableEnded && !!res.socket && !res.socket.destroyed && res.socket.writable;
   const r = relay.ask(raw, parseWait(url.searchParams.get('waitMs')), { alive });
   if (r.error) return asHook ? none(r.error) : sendJson(res, r.status, { error: r.error });

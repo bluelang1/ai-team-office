@@ -88,7 +88,7 @@ The dashboard only reads hook logs, so every state is either **observed** (a hoo
 
 - Local only: the dashboard binds to `127.0.0.1`; nothing is sent anywhere.
 - Host and Origin checks on every request (DNS-rebinding and cross-site protection); POST requires `Content-Type: application/json`.
-- Viewer rule: answers from the dashboard only count while a real dashboard tab is open; otherwise the relay steps aside and the terminal prompt works as usual.
+- Viewer rule: the relay only holds a request while a real dashboard tab is open (any tab for permission prompts, since the terminal prompt stays usable alongside; a visible tab for questions, which block the terminal until the hook returns); otherwise it steps aside and the terminal prompt works as usual.
 - Consumes no tokens: it only reads local logs under `~/.claude/logs/`.
 - Use `--redact` to mask prompts, file paths and command arguments in what the dashboard displays.
 

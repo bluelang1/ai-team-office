@@ -31,3 +31,9 @@
 ## 0.2.3 — 2026-10-21
 - CEO room: the idle ping ~60s after a turn ends no longer replaces the open report card (report body stays visible)
 - Header shows the running version, e.g. `AI Team Office (v0.2.3)`, read from `plugin.json` via `/healthz`
+
+## 0.2.4 — 2026-10-21
+- CEO room relay: permission prompts are held while any dashboard tab is open, even in the background (questions still need a visible tab); a reload no longer drops pending items (5s grace on close)
+- A page left open across a server restart reloads itself for a fresh viewer token
+- "입력을 기다리고 있어요" (idle) is a short-lived 대기 중 card, no longer "답이 필요해요"
+- Server log says why a request was not relayed

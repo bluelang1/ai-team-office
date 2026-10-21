@@ -138,6 +138,9 @@ function connect() {
   es.addEventListener('usage', m => { if (usage.add(safeJSON(m.data))) { panelDirty = sceneDirty = true; kick(); } });
   es.addEventListener('ready', m => {
     const info = safeJSON(m.data) || {};
+    // The server restarted while this page stayed open: its viewer token is gone, so answers would be refused. Reload.
+    const boot = document.querySelector('meta[name="office-boot"]')?.content;
+    if (!SIM && boot && typeof info.boot === 'string' && info.boot !== boot) { location.reload(); return; }
     ui.mode = SIM ? '시뮬레이터' : info.mode === 'replay' ? '리플레이' : '실시간';
     if (info.redact) ui.mode += ' · 가림';
     if ('building' in info) serverBuilding = info.building && typeof info.building === 'object' ? info.building : null;
@@ -734,10 +737,10 @@ function renderPop() {
     if (!q) return closePop();
     const w = whoOf(q);
     repBody = q.kind === 'report' && typeof q.body === 'string' ? q.body : '';
-    html = `<header><b>${esc(displayName(w))}</b><span class="prio ${q.prio}">${q.prio === HIGH ? '답이 필요해요' : '보고'}</span></header>
+    html = `<header><b>${esc(displayName(w))}</b><span class="prio ${q.prio}">${q.prio === HIGH ? '답이 필요해요' : q.kind === 'idle' ? '대기 중' : '보고'}</span></header>
       <dl><dt>층</dt><dd>${esc(floorLabel(q.proj))}${rowOf(q.proj)?.label !== q.proj ? ` <small>${esc(q.proj)}</small>` : ''}</dd>
       <dt>세션</dt><dd class="mono">${esc(q.sid.slice(0, 4))}</dd><dt>기다린 시간</dt><dd class="live-wait"></dd></dl>
-      ${q.relay ? relayHTML(q.relay) : q.kind === 'report' ? reportHTML(repBody) : `<p class="ask">${esc(q.text)}</p><p class="rl-left">${relayNote}</p>`}
+      ${q.relay ? relayHTML(q.relay) : q.kind === 'report' ? reportHTML(repBody) : `<p class="ask">${esc(q.text)}</p><p class="rl-left">${q.kind === 'idle' ? idleNote : relayNote}</p>`}
       <div class="btns">${RELEASE_BTN}${q.kind === 'report' ? '' : '<button type="button" class="chipbtn" data-a="copy">복사</button>'}<button type="button" class="chipbtn primary" data-a="focus">터미널로</button></div>`;
   } else if (pop.kind === 'c') {
     const sp = sprites.get(pop.key), c = sp?.c && view(sp.c, spriteSid);
@@ -777,6 +780,7 @@ function renderPop() {
     el.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
   }
 }
+const idleNote = '할 일을 마치고 다음 지시를 기다려요. 잠시 뒤 자리로 돌아가요.';
 const relayNote = '이 요청은 여기서 답할 수 없어요 (대표실 중계가 꺼져 있거나 지난 요청). 터미널에서 답해 주세요.';
 /** The 실장's (or a subagent's) final report: escaped plain text with line breaks, its own scroll, and 전체 복사. */
 function reportHTML(body, title = '보고 내용') {
