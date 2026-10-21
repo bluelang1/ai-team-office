@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Thin wrapper (on the Bash tool PATH while the plugin is enabled):
+#   ai-team-verdict <agent_id> <ok|rework|fail> "<one-line reason>"
+exec "$(dirname "$0")/../hooks/delegation-log.sh" verdict "$@"

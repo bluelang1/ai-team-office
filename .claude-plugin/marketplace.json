@@ -1,0 +1,17 @@
+{
+  "name": "ai-team-office",
+  "description": "Model-routed AI team for Claude Code, with a real-time pixel office dashboard.",
+  "owner": {
+    "name": "bluelang1",
+    "url": "https://github.com/bluelang1"
+  },
+  "plugins": [
+    {
+      "name": "ai-team",
+      "source": "./plugins/ai-team",
+      "description": "Model-routed AI team: Fable/Opus main plans and verifies, cheaper subagents work, delegation log with verdicts, pixel office dashboard.",
+      "category": "productivity",
+      "tags": ["subagents", "model-routing", "dashboard", "hooks"]
+    }
+  ]
+}

@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>AI Team Office</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand"><span class="logo" aria-hidden="true"></span><span>AI Team Office</span></div>
+    <nav class="tabs floors" id="floors" aria-label="층 (프로젝트)"></nav>
+    <nav class="tabs roomtabs" id="roomtabs" aria-label="방 (세션)"></nav>
+    <div class="top-right">
+      <span class="pill amber" id="needs" hidden>🙋 승인 대기 <b>0</b></span>
+      <span class="conn" id="conn" data-state="wait">연결 중…</span>
+      <button class="icon-btn" id="sound" type="button" title="승인 대기 소리 알림 (기본 무음)" aria-pressed="false">🔕</button>
+      <button class="icon-btn" id="theme" type="button" title="테마: 자동">◐</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="scene-wrap" aria-label="사무실">
+      <div class="scene" id="scene">
+        <div class="room" data-room="library" style="--x:2;--y:3;--w:23;--h:31"><h3>자료실</h3>
+          <div class="shelf"></div><div class="shelf"></div><div class="shelf"></div></div>
+        <div class="room" data-room="meeting" style="--x:27;--y:3;--w:27;--h:31"><h3>회의실</h3>
+          <div class="table-round"></div></div>
+        <div class="room" data-room="review" style="--x:56;--y:3;--w:22;--h:31"><h3>검수실</h3>
+          <div class="review-desk"><span class="lens"></span></div></div>
+        <div class="room elevator" data-room="elevator" style="--x:80;--y:3;--w:18;--h:31"><h3>엘리베이터</h3>
+          <div class="lift"><span class="lamp"></span><div class="door l"></div><div class="door r"></div></div></div>
+        <div class="room open-floor" data-room="floor" style="--x:2;--y:36;--w:96;--h:28"><h3>사무실</h3>
+          <div class="desk sub" data-desk="0" style="--dx:9"></div>
+          <div class="desk sub" data-desk="1" style="--dx:19.5"></div>
+          <div class="desk sub" data-desk="2" style="--dx:30"></div>
+          <div class="desk main" data-desk="main" style="--dx:50"><span class="plate">Fable</span></div>
+          <div class="desk sub" data-desk="3" style="--dx:70"></div>
+          <div class="desk sub" data-desk="4" style="--dx:80.5"></div>
+          <div class="desk sub" data-desk="5" style="--dx:91"></div>
+        </div>
+        <div class="room" data-room="server" style="--x:2;--y:66;--w:30;--h:31"><h3>서버실</h3>
+          <div class="racks"><div class="rack"><i></i><i></i><i></i></div><div class="rack"><i></i><i></i><i></i></div><div class="rack"><i></i><i></i><i></i></div></div></div>
+        <div class="room" data-room="bench" style="--x:34;--y:66;--w:32;--h:31"><h3>작업대</h3>
+          <div class="workbench"><span></span><span></span></div></div>
+        <div class="room" data-room="external" style="--x:68;--y:66;--w:30;--h:31"><h3>외부창구</h3>
+          <div class="window-counter"><span class="glass"></span></div></div>
+        <div class="sprites" id="sprites"></div>
+        <div class="empty" id="empty">빈 사무실이에요. 오늘 기록된 이벤트가 아직 없어요.</div>
+      </div>
+      <p class="legend">
+        <span><i class="obs observed"></i>관측</span><span><i class="obs inferred"></i>추정</span><span><i class="obs stale"></i>오래됨(5분+)</span>
+        <span class="sw" style="--c:var(--fable)">fable·왕관</span><span class="sw" style="--c:var(--opus)">opus·캡</span>
+        <span class="sw" style="--c:var(--sonnet)">sonnet·헤드폰</span><span class="sw" style="--c:var(--haiku)">haiku·털모자</span>
+        <span><i class="pips" style="--m:var(--ink)"><i class="on"></i><i class="on"></i><i></i><i></i></i>이름표 막대 = effort</span><span>숨쉬기·커피=장식</span>
+      </p>
+    </section>
+
+    <aside class="panel">
+      <section class="card meter" id="meter" aria-label="모델 분배 준수 계기판"></section>
+      <section class="card"><h2>지금</h2><div id="now" class="now"></div></section>
+      <section class="card"><h2>위임 로그</h2><div id="deleg" class="deleg"></div></section>
+      <section class="card"><h2>오늘 통계</h2><div id="stats" class="stats"></div></section>
+    </aside>
+  </main>
+
+  <footer class="ticker"><span class="ticker-label">이벤트</span><ol id="ticker"></ol></footer>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

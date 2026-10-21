@@ -1,0 +1,14 @@
+{
+  "name": "ai-team",
+  "displayName": "AI Team",
+  "version": "0.1.0",
+  "description": "Model-routed AI team for Claude Code: a Fable/Opus main that plans and verifies, cheaper subagents that do the work, a delegation log with verdicts, and a real-time pixel office dashboard.",
+  "author": {
+    "name": "bluelang1",
+    "url": "https://github.com/bluelang1"
+  },
+  "homepage": "https://github.com/bluelang1/ai-team-office",
+  "repository": "https://github.com/bluelang1/ai-team-office",
+  "license": "MIT",
+  "keywords": ["subagents", "model-routing", "delegation", "orchestration", "dashboard", "pixel-office", "hooks"]
+}

@@ -1,0 +1,5 @@
+{
+  "type": "module",
+  "main": "index.mjs",
+  "description": "Lets `node --test office/test/` resolve the directory to the suite (Node treats a directory arg as a module path); index.mjs imports every *.test.mjs."
+}

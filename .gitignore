@@ -1,0 +1,5 @@
+office/.run/
+plugins/ai-team/office/.run/
+*.log
+.DS_Store
+node_modules/
