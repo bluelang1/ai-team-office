@@ -4,6 +4,8 @@
 // This module owns: room rectangles, seats (where characters sit), the aisle network (how they walk) and two painters:
 // drawWorld() (static, redrawn on theme/sky change) and drawFx() (blinking LEDs, screens; a few Hz).
 
+import { PARK_LAMPS, PATH_Y, coupleAt } from './ambient.js';
+
 export const W = 416, H = 344;
 export const AISLE_TOP = 154, AISLE_BOT = 232;
 const SPINES = [40, 130, 198, 254, 326];
@@ -316,7 +318,10 @@ function drawExterior(sky) {
     R(tx, ty, 4, 3, S.tree); R(tx + 1, ty - 1, 2, 1, S.tree); R(tx + 1, ty + 3, 1, 1, shade(S.tree, -0.3));
     if (sky !== 'night') R(tx + 1, ty, 1, 1, shade(S.tree, 0.2));
   }
-  if (sky === 'night') for (let lx = 220; lx < W; lx += 17) R(lx, HORIZON + 5, 1, 1, '#ffe39a');           // park lamps
+  if (sky === 'night') for (const lx of PARK_LAMPS) {                                                             // park lamps
+    R(lx, HORIZON + 1, 1, 5, '#3a4250'); R(lx, HORIZON, 1, 1, '#ffe39a');
+    ctx.fillStyle = 'rgba(255, 220, 140, 0.18)'; ctx.fillRect(lx - 2, HORIZON - 1, 5, 3); ctx.fillRect(lx - 1, HORIZON + 2, 3, 4);
+  }
   // glass: mullions, transom, reflections, sill
   const mull = sky === 'night' ? '#2c333c' : P.mullion;
   R(0, 0, W, 2, P.frame);
@@ -488,7 +493,6 @@ function drawCeo() {
   R(318, 240, 90, 34, P.oakFace); for (let x = 320; x < 408; x += 9) R(x, 241, 1, 33, P.oakDark); R(318, 240, 90, 2, P.oak); R(318, 272, 90, 2, P.oakDark);  // wood panel
   carpet(274, 274, 134, 66, P.carpetCeo, 99);
   R(300, 296, 60, 34, P.rug); R(302, 298, 56, 30, P.rugIn); R(304, 300, 52, 26, P.rug);
-  tallPlant(392, 300);
   R(320, 276, 16, 12, P.oakFace); R(320, 276, 16, 2, P.oak); R(323, 279, 3, 6, '#3b82c4'); R(327, 280, 3, 5, '#c0504d'); R(331, 279, 2, 6, '#f2c14e');   // credenza
   glassSide(272, 240, 100);
 }
@@ -547,4 +551,41 @@ export function drawFx(canvas, st) {
   if ((st.sky === 'night' || st.sky === 'evening') && (st.still || Math.floor(t) % 2 === 0)) R(339, 0, 2, 2, '#ff4a4a');
   // copier busy light
   R(355, 161, 1, 1, Math.floor(t * 2) % 2 && !st.still ? '#64d97b' : '#2f7a43');
+}
+
+// ---------- night life through the glass (ambient.js decides when; this draws) ----------
+const behindFrame = x => x % 32 < 2 || x < 1 || x >= W - 1;                         // mullions stay in front
+function px(c, x, y, col, a = 1) { if (y < 0 || y > 41 || behindFrame(x)) return; c.globalAlpha = a; c.fillStyle = col; c.fillRect(x, y, 1, 1); }
+/** Draw the shooting star and the strolling couples of `amb` at time t onto the fx canvas (world coords). */
+export function drawAmbient(canvas, amb, t) {
+  if (!amb.on) return;
+  const c = canvas.getContext('2d');
+  const s = amb.star;
+  if (s) {
+    const p = Math.min(1, (t - s.t0) / s.dur), e = 1 - (1 - p) ** 2, fade = Math.sin(Math.PI * p);
+    const hx = s.x0 + (s.x1 - s.x0) * e, hy = s.y0 + (s.y1 - s.y0) * e, len = Math.hypot(s.x1 - s.x0, s.y1 - s.y0);
+    const ux = (s.x1 - s.x0) / len, uy = (s.y1 - s.y0) / len;
+    for (let k = 0; k < 16; k++) px(c, Math.round(hx - ux * k), Math.round(hy - uy * k), k < 3 ? '#ffffff' : '#cfe2ff', Math.min(1, fade * 1.3) * (1 - k / 16));
+    px(c, Math.round(hx) + 1, Math.round(hy), '#ffffff', fade * 0.5); px(c, Math.round(hx), Math.round(hy) - 1, '#ffffff', fade * 0.5);
+  }
+  for (const cp of amb.couples) {
+    const st = coupleAt(cp, t), x = Math.round(st.x), y = PATH_Y, a = st.alpha, step = st.walking ? Math.floor(t / 260) % 2 : 0;
+    const gap = st.moment === 'hug' ? 2 : 3, lean = st.moment === 'kiss' && st.mt > 300 && st.mt < cp.stop.len - 300 ? 1 : 0;
+    const person = (x0, look, side) => {
+      const [hair, top, pants] = look, h = side === 'L' ? lean : -lean;
+      px(c, x0 + h, y - 4, hair, a); px(c, x0 + 1 + h, y - 4, hair, a);
+      px(c, x0 + h, y - 3, '#f2c6a0', a); px(c, x0 + 1 + h, y - 3, '#e8b48c', a);
+      px(c, x0, y - 2, top, a); px(c, x0 + 1, y - 2, top, a); px(c, x0, y - 1, top, a); px(c, x0 + 1, y - 1, top, a);
+      px(c, x0 + (step && side === 'L' ? 1 : 0), y, pants, a); if (!step) px(c, x0 + 1, y, pants, a);
+    };
+    const xa = x, xb = x + gap;
+    person(xa, cp.a, 'L'); person(xb, cp.b, 'R');
+    if (st.moment === 'hug') { px(c, xa + 2, y - 2, '#f2c6a0', a); px(c, xb - 1, y - 2, '#f2c6a0', a); }
+    else px(c, xa + 2, y - 1, '#f2c6a0', a);                                         // holding hands
+    if (st.moment === 'kiss' && st.mt > 300) {                                         // a tiny heart floats up
+      const k = Math.min(1, (st.mt - 300) / 1400), hy = y - 7 - Math.round(k * 5), hx = xa + 1, ha = a * (1 - k * 0.8);
+      for (const [dx, dy] of [[0, 0], [2, 0], [0, 1], [1, 1], [2, 1], [1, 2]]) px(c, hx + dx, hy + dy, '#ff6f91', ha);
+    }
+  }
+  c.globalAlpha = 1;
 }

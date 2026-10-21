@@ -2,7 +2,8 @@
 // never invents activity. Only ?sim=1 adds made-up data (sim.js), and the UI says so.
 import { initState, reduceAll, tick, compliance, bashTokens, MODELS } from './reducer.js';
 import { paint, applyTextures, applyIcons } from './sprites.js';
-import { W, H, ROOMS, SEATS, MAIN_SEAT, ELEVATOR_SPOT, DROP_SPOT, AISLE_TOP, chainOf, route, drawWorld, drawFx } from './world.js';
+import { W, H, ROOMS, SEATS, MAIN_SEAT, ELEVATOR_SPOT, DROP_SPOT, AISLE_TOP, chainOf, route, drawWorld, drawFx, drawAmbient } from './world.js';
+import { Ambient } from './ambient.js';
 import { mountClock, ymd } from './clock.js';
 import { limitsHTML, ctxHTML, ctxOf, tokKo } from './limits.js';
 import { openSecretary } from './secretary.js';
@@ -10,7 +11,7 @@ import { SeatBook } from './seats.js';
 import { displayName, lookOf, rankOf, jobOf, JOB_LONG, nickname, nameFromWho, resetNames, ACT_KO, hash32, mainTitle } from './roles.js';
 import { layoutFloors, mountBuilding, renderOverview, elevatorFx } from './building.js';
 import { openFloorEditor } from './editor.js';
-import { ceoStep, ceoList, ceoResolve, ceoExpire, HIGH, dismissKey, visibleQueue, releasePlan, DismissStore } from './ceo.js';
+import { ceoStep, ceoList, ceoResolve, ceoExpire, HIGH, dismissKey, visibleQueue, releasePlan, DismissStore, ceoSpots } from './ceo.js';
 import { Usage, bindTips, usageSummaryHTML, detailHTML } from './charts.js';
 import { applyFrame, sweep, resetRelay, mergeQueue, relayHTML, relayLive, onRelayClick, onRelayInput, decidedKey, keyOfRelay, releaseRelay, officeHeaders } from './ceocard.js';
 import * as sim from './sim.js';
@@ -608,6 +609,7 @@ function specFrame(sp, now) {
   return { pose, prop, frame, anim, fx };
 }
 let fxDirty = true, fxAt = 0;
+const ambient = new Ambient({ force: new URLSearchParams(location.search).get('fx') || '' });   // ?fx=star,couple forces them (testing)
 function animate(now) {
   let anim = false;
   for (const sp of sprites.values()) {
@@ -617,14 +619,17 @@ function animate(now) {
     paint(sp.cv, { look: sp.look, model: m, ...s });
   }
   const f = reducedMotion.matches ? 0 : Math.floor(now / 1600) % 2;
-  paint($('boss'), { look: 'ceo', model: null, pose: 'sit', seat: 'desk', prop: 'mug', frame: f });
+  paint($('boss'), { look: 'ceo', model: null, view: 'side', pose: 'sit', prop: 'mug', frame: f });
   for (const fg of figs.values()) paint(fg.cv, fg.spec);
-  if (fxDirty || (!reducedMotion.matches && now - fxAt > 240)) {
-    fxDirty = false; fxAt = now;
+  const night = ambient.step(now, { sky: skyNow(), reduced: reducedMotion.matches });     // shooting stars, park couples
+  if (fxDirty || night || ambient.was || (!reducedMotion.matches && now - fxAt > 240)) {
+    fxDirty = false; fxAt = now; ambient.was = night;
     const taken = new Set();
     for (const [key, id] of seats.keys()) { const sp = sprites.get(id); if (sp && !sp.walking && sp.atKey === key) taken.add(key); }
     drawFx(fxCv, { t: now, dark: isDark(), sky: skyNow(), taken, busy, still: reducedMotion.matches });
+    drawAmbient(fxCv, ambient, now);
   }
+  if (night) kick();                                                                    // smooth while something crosses the sky
   return anim || !reducedMotion.matches;
 }
 
@@ -665,9 +670,9 @@ function renderCeo(list) {
   $('ceo').classList.toggle('ringing', high > 0);
   $('ceo-empty').hidden = list.length > 0;
   const line = $('ceo-line'), keys = new Set(), now = performance.now();
-  // As many 64px figures as fit side by side (no overlap); the rest become +N.
-  const qw = Math.round(24 * S) + 4, fit = n => Math.max(1, Math.min(4, Math.floor(((line.clientWidth || innerWidth - 100) + 2 - n) / qw)));
-  const cap = fit(0);
+  // Queue spots in front of the desk on the door side (ceo.js CEO_PLAN); everyone faces right, toward the 대표.
+  const cs = parseFloat(getComputedStyle($('ceo')).getPropertyValue('--s')) || S, roomW = (line.clientWidth || 268) / cs;
+  const spots = ceoSpots(list.length, roomW), cap = spots.length;
   list.slice(0, cap).forEach((q, i) => {
     keys.add(q.key);
     let f = figs.get(q.key);
@@ -681,22 +686,23 @@ function renderCeo(list) {
       f = { el, cv: el.querySelector('canvas'), q };
       figs.set(q.key, f);
     }
-    const w = whoOf(q);
-    f.q = q; f.el.dataset.key = q.key; f.el.style.order = String(i); f.el.classList.toggle('front', i === 0);
+    const w = whoOf(q), sp = spots[i];
+    f.q = q; f.el.dataset.key = q.key; f.el.classList.toggle('front', i === 0);
+    f.el.style.setProperty('--qr', String(sp.r)); f.el.dataset.face = sp.face;
     f.el.classList.toggle('hi', q.prio === HIGH); f.el.classList.toggle('lo', q.prio !== HIGH); f.el.classList.toggle('can', !!q.relay && q.relay.status === 'pending');
     const txt = q.text.length > 18 ? `${q.text.slice(0, 17)}…` : q.text;
     const qb = f.el.querySelector('.qb'); if (qb.textContent !== txt) qb.textContent = txt;
     const nm = displayName(w), fn = rowOf(q.proj)?.n, short = `${fn ? `${fn}F ` : ''}${q.aid ? nickname(q.aid) : '실장'}`;
     const qn = f.el.querySelector('.qn'); if (qn.textContent !== short) qn.textContent = short;
     f.el.setAttribute('aria-label', `${nm}: ${q.text}`);
-    f.spec = { look: lookOf(w), model: MODELS.includes(w.model) ? w.model : 'unknown', pose: q.prio === HIGH ? 'hand' : 'stand', prop: 'clipboard' };
+    f.spec = { look: lookOf(w), model: MODELS.includes(w.model) ? w.model : 'unknown', view: 'side', pose: q.prio === HIGH ? 'hand' : 'stand', prop: 'clipboard' };
   });
   for (const [k, f] of figs) if (!keys.has(k) && !f.leaving) {
     f.leaving = now; f.spec = { ...f.spec, pose: 'bow', prop: null }; f.el.classList.add('bye');
     setTimeout(() => { f.el.remove(); figs.delete(k); }, reducedMotion.matches ? 0 : 480);
   }
   let more = line.querySelector('.qmore');
-  if (list.length > cap) { if (!more) { more = document.createElement('span'); more.className = 'qmore'; line.append(more); } more.textContent = `+${list.length - cap}`; more.title = `대기 ${list.length - cap}명 더`; more.style.order = '99'; }
+  if (list.length > cap) { if (!more) { more = document.createElement('span'); more.className = 'qmore'; line.append(more); } more.textContent = `+${list.length - cap}`; more.title = `대기 ${list.length - cap}명 더`; more.style.setProperty('--qr', String(spots[cap - 1].r + 16)); }
   else more?.remove();
   $('needs').hidden = !high; $('needs').querySelector('b').textContent = high;
   if (high > lastHigh && ui.sound && ui.live) chime();

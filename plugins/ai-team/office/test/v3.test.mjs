@@ -273,3 +273,49 @@ test('돌려보내기: local dismissal hides only that occurrence (survives relo
   assert.equal(mergeQueue([]).length, 0);
   resetRelay();
 });
+
+import { ceoSpots, CEO_PLAN } from '../public/ceo.js';
+import { Ambient, coupleAt, PARK_SEGMENTS } from '../public/ambient.js';
+test('대표실: the 대표 faces left from the right wall; the queue stands left of the desk and faces right', () => {
+  const W = 134, P = CEO_PLAN, x = r => W - r;                         // r = distance from the right wall
+  assert.equal(P.boss.face, 'left');
+  assert.ok(x(P.desk.r1) < x(P.boss.r) && x(P.boss.r) < x(P.chair.r0), 'door … desk … 대표 … chair … right wall');
+  const s = ceoSpots(2, W);
+  assert.equal(s.length, 2);
+  for (const sp of s) { assert.equal(sp.face, 'right'); assert.ok(x(sp.r) + 12 <= x(P.desk.r1), `spot ${sp.r} left of the desk`); }
+  assert.ok(x(s[0].r) > x(s[1].r), 'the first in line stands closest to the desk');
+  assert.equal(ceoSpots(9, W).length, 3, 'as many as fit between the door and the desk (+N for the rest)');
+  assert.equal(ceoSpots(9, 400).length, 4, 'never more than 4');
+  assert.ok(ceoSpots(9, 110).length < 3, 'a narrower room fits fewer');
+  assert.deepEqual(ceoSpots(0, W), []);
+});
+
+test('night life: shooting stars and park couples only at night, never under reduced motion; timing and counts', () => {
+  let seed = 7; const rng = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296);
+  const run = (env, ms, opts = {}) => { const a = new Ambient({ rng, ...opts }); const seen = { stars: 0, maxCouples: 0, maxStars: 0, starGaps: [], visits: [] }; let last = null, lastEnd = null;
+    for (let t = 0; t <= ms; t += 50) { a.step(t, env);
+      if (a.star && a.star !== last) { seen.stars++; if (lastEnd != null) seen.starGaps.push(a.star.t0 - lastEnd); last = a.star; assert.ok(a.star.dur >= 600 && a.star.dur <= 1000); assert.ok(a.star.x1 < a.star.x0 && a.star.y1 > a.star.y0, 'diagonal, downwards'); }
+      if (!a.star && last && lastEnd == null) lastEnd = t;
+      if (!a.star && last) lastEnd = lastEnd ?? t;
+      if (a.star) lastEnd = null;
+      seen.maxCouples = Math.max(seen.maxCouples, a.couples.length);
+      for (const c of a.couples) { if (!seen.visits.includes(c.dur)) seen.visits.push(c.dur); const p = coupleAt(c, t); assert.ok(p.x >= c.min && p.x <= c.max, 'stays on the park path'); }
+    }
+    return seen; };
+  for (const sky of ['morning', 'day', 'evening']) { const s = run({ sky, reduced: false }, 300000); assert.equal(s.stars + s.maxCouples, 0, `${sky}: nothing`); }
+  assert.equal(run({ sky: 'night', reduced: true }, 300000).stars, 0, 'reduced motion: no stars');
+  assert.equal(run({ sky: 'night', reduced: true }, 300000).maxCouples, 0, 'reduced motion: no couples');
+  const n = run({ sky: 'night', reduced: false }, 600000);
+  assert.ok(n.stars >= 600000 / 26000 && n.stars <= 600000 / 8000 + 1, `stars in 10 min: ${n.stars}`);
+  assert.ok(n.starGaps.every(g => g >= 7950 && g <= 25100), `gaps ${n.starGaps}`);
+  assert.ok(n.maxCouples >= 1 && n.maxCouples <= 2, `couples at once: ${n.maxCouples}`);
+  assert.ok(n.visits.every(d => d >= 8000 && d <= 20000));
+  const f = new Ambient({ rng, force: 'star,couple' }); f.step(0, { sky: 'night', reduced: false }); f.step(300, { sky: 'night', reduced: false });
+  assert.ok(f.star && f.couples.length === 1, '?fx=star,couple forces both at once');
+  f.step(400, { sky: 'day', reduced: false }); assert.ok(!f.on, 'daylight clears them');
+  const c = { t0: 0, dur: 15000, x0: 300, dir: 1, speed: 0.006, min: PARK_SEGMENTS[1][0], max: PARK_SEGMENTS[1][1], stop: { x: 322, len: 2000, kind: 'kiss' } };
+  assert.equal(coupleAt(c, 0).alpha, 0, 'fades in');
+  const at = (322 - 300) / 0.006;
+  assert.deepEqual([coupleAt(c, at + 500).moment, coupleAt(c, at + 500).walking, coupleAt(c, at + 500).x], ['kiss', false, 322], 'stops under the lamp');
+  assert.ok(coupleAt(c, at + 2500).walking && coupleAt(c, at + 2500).x > 322, 'then walks on');
+});

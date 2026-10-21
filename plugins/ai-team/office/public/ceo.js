@@ -97,3 +97,19 @@ export class DismissStore {
     try { this.storage?.setItem(this.name, JSON.stringify([...this.set])); } catch { /* private mode: in-memory only */ }
   }
 }
+
+// ---------- 대표실 floor plan (world units, room 134×100; x measured from the room's RIGHT wall so the banner works too) ----------
+// The 대표 sits with his back to the right (exterior) wall and faces LEFT, toward the door; the desk stands between
+// him and the door. People waiting queue in front of the desk on the door side and face RIGHT, toward him.
+export const CEO_PLAN = {
+  chair: { r0: 3, r1: 13, y0: 58, y1: 90 },          // r = distance from the right wall
+  boss: { r: 22, y: 90, face: 'left' },               // seated anchor (sprite centre, bottom)
+  desk: { r0: 32, r1: 48, y0: 58, y1: 92 },           // side-view desk between him and the door
+  spot0: 60, step: 21, y: 91, min: 8,                // queue: first spot just left of the desk, then further left (label below)
+};
+/** Queue spots for n people: [{ r (centre, from the right wall), y (feet), face: 'right' }], front first.
+ *  Only as many as fit between the door side and the desk (room width w); the rest are counted as +N. */
+export function ceoSpots(n, w = 134) {
+  const P = CEO_PLAN, fit = Math.max(1, Math.floor((w - P.min - 12 - P.spot0) / P.step) + 1);
+  return Array.from({ length: Math.min(n, fit, 4) }, (_, i) => ({ r: P.spot0 + i * P.step, y: P.y, face: 'right' }));
+}

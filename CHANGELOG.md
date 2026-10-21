@@ -16,3 +16,7 @@
 - Skills: `/ai-team:ai-team-setup` (installs operating rules after confirmation), `/ai-team:office` (start/stop/status of the dashboard).
 - Operating rules block (EN + KO) and `ai-team-verdict` helper.
 - Pixel office dashboard: zero dependencies, 127.0.0.1 only, zero tokens, `--redact`, replay mode, light/dark themes.
+
+## 0.2.1 — 2026-10-21
+- CEO room: the CEO faces the door; visitors queue in front of the desk facing him
+- Night view: occasional shooting stars over the mountains; couples strolling in the park
