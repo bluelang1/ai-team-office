@@ -32,7 +32,7 @@ Claude Code 메인 세션(Fable)과 서브에이전트(opus/sonnet/haiku)가 **�
 
 ## 캐릭터 규칙
 - 모델별 색/모자: fable=보라(메인, 넥타이), opus=남색, sonnet=청록, haiku=노랑. effort 는 머리 위 작은 점 1~4개.
-- 이름표: `atype` (lookup / code-reviewer / implementer / Explore …) + 짧은 aid 4자.
+- 이름표: `atype` (lookup / code-reviewer / backend-dev / Explore …) + 짧은 aid 4자.
 - 메인(Fable)은 항상 사무실 중앙 큰 책상. 서브는 엘리베이터로 도착해 빈 책상에 앉음.
 - 세션(sid) 여러 개 = 층(floor) 여러 개. 상단 탭으로 층 전환, 기본은 가장 최근 활동 층.
 

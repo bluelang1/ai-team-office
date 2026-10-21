@@ -1,0 +1,6 @@
+/building.json
+/pricing.json
+.run/
+*.log
+node_modules/
+*.bak*

@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Statusline wrapper for the AI Team Office dashboard (plan limits + context).
+# Saves the statusline JSON per session, then runs the user's PREVIOUS statusLine command
+# (stored by ai-team-setup in ~/.claude/logs/statusline/.previous-command) with the same stdin.
+# If there is no previous command, prints nothing.
+in=$(cat)
+sid=$(printf '%s' "$in" | jq -r '.session_id // empty' 2>/dev/null)
+d="$HOME/.claude/logs/statusline"
+if [ -n "$sid" ]; then
+  mkdir -p "$d"
+  printf '%s' "$in" | jq -c --argjson t "$(date +%s)" '. + {_captured_at:$t}' > "$d/$sid.json.tmp" 2>/dev/null \
+    && mv "$d/$sid.json.tmp" "$d/$sid.json"
+fi
+prev=""
+[ -f "$d/.previous-command" ] && prev=$(cat "$d/.previous-command")
+if [ -n "$prev" ]; then
+  printf '%s' "$in" | exec bash -c "$prev"
+fi
+exit 0

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Event feed for the AI Team Office dashboard: one line per session/subagent activity in ~/.claude/logs/office-events.jsonl
+# Event log for the AI Team Office dashboard: one line per hook event (all sessions and subagents) in ~/.claude/logs/office-events.jsonl.
 LOG="$HOME/.claude/logs/office-events.jsonl"
 mkdir -p "$(dirname "$LOG")"
 TS=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
 jq -c --arg ts "$TS" '
   def head(n): if type=="string" then (if length>n then .[0:n]+"…" else . end) else . end;
-  def proj: (.cwd // "" | split("/") | last);
+  def proj: ((env.CLAUDE_PROJECT_DIR // .cwd // "") | split("/") | last);
   (.tool_input // {}) as $i |
   {ts:$ts,
    ev:(.hook_event_name // "unknown"),
@@ -23,13 +23,18 @@ jq -c --arg ts "$TS" '
    target:(
      $i.file_path // $i.path // $i.pattern // $i.url // $i.query //
      ($i.command|head(120)) // $i.description // $i.skill // $i.name // null),
-   # for delegations: who, which model
+   # for delegations: which agent, which model
    sub:(if .tool_name=="Agent" then {type:$i.subagent_type, model:$i.model, effort:$i.effort, desc:$i.description, prompt:($i.prompt|head(200))} else null end),
    child:(.tool_response.agentId // null),
    resolved:(.tool_response.resolvedModel // null),
    prompt:(.prompt|head(200)),
    msg:(.message // .last_assistant_message | head(300)),
    ntype:(.notification_type // null),
+   # calls that need a human answer: question text (AskUserQuestion) / approval target (PermissionRequest)
+   ask:(if .tool_name=="AskUserQuestion" then (($i.questions // [])|map(.question // "")|join(" / ")|head(300))
+        elif .hook_event_name=="PermissionRequest" then ((.tool_name // "") + " " + (($i.command // $i.file_path // $i.url // $i.description // "")|tostring|head(160)))
+        else null end),
+   tty:(.tty // null),
    trigger:(.trigger // null),
    ok:(if .hook_event_name=="PostToolUseFailure" then false else null end),
    err:(.error|head(200))

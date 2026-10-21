@@ -1,0 +1,18 @@
+{
+  "_comment": "test numbers only, not real prices",
+  "fable": {
+    "in": 1,
+    "out": 2,
+    "cacheR": 0.5,
+    "cacheW": 1.25
+  },
+  "haiku": {
+    "in": 0.1,
+    "out": 0.2,
+    "cacheR": 0.01,
+    "cacheW": 0.125
+  },
+  "opus": {
+    "in": 1
+  }
+}

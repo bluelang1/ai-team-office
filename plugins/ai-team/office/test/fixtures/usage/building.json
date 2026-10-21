@@ -1,0 +1,13 @@
+{
+  "floors": {
+    "shop-backend-app": {
+      "floor": 1,
+      "label": "쇼핑 백엔드"
+    },
+    "AI_Team": {
+      "floor": 9,
+      "label": "AI 팀 사무실"
+    }
+  },
+  "ceo": "대표"
+}

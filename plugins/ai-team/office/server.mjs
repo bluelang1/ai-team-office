@@ -2,6 +2,9 @@
 // AI Team Office server — zero deps. Serves public/ and GET /events (SSE).
 // Live mode: replays today's (local-time) lines of office-events.jsonl + delegation.jsonl, then tails both.
 // Replay mode: --replay <file> --speed N re-emits a jsonl file with time compression (ts rewritten to now).
+// 대표실 relay (relay.mjs): hooks long-poll POST /relay/ask|/relay/hook, the dashboard answers via POST /relay/answer
+// or sends a card back undecided via POST /relay/release (no decision: the terminal prompt takes over).
+// Usage: token records from today's Claude Code transcripts (usage.mjs), `event: usage-batch` then `event: usage`.
 // Imported (tests) it only exports helpers; it listens only when run as the main script.
 import http from 'node:http';
 import fs from 'node:fs';
@@ -9,13 +12,19 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { classify, parseLine, norm } from './public/reducer.js';
+import { Usage, loadJson, scanProjects, projectName, encodeDir } from './usage.mjs';
+import { focusSession, SID_RE, makeLimiter } from './focus.mjs';
+import { Limits } from './limits.mjs';
+import crypto from 'node:crypto';
+import { Relay, parseWait, hookOutput, checkCaller, execRunner, fakeAncestryRunner } from './relay.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
 const HOME = os.homedir();
 
 function parseArgs(argv) {
-  const o = { port: 4747, replay: null, speed: 20, redact: false, logs: path.join(HOME, '.claude', 'logs') };
+  const o = { port: 4747, replay: null, speed: 20, redact: false, logs: path.join(HOME, '.claude', 'logs'),
+    usage: true, statusline: path.join(HOME, '.claude', 'logs', 'statusline'), projects: path.join(HOME, '.claude', 'projects'), config: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i], next = () => argv[++i];
     if (a === '--port') { const p = Number(next()); o.port = Number.isInteger(p) && p >= 0 && p < 65536 ? p : 4747; }   // 0 = any free port
@@ -23,8 +32,14 @@ function parseArgs(argv) {
     else if (a === '--speed') o.speed = Math.max(0.1, Number(next()) || 20);
     else if (a === '--redact') o.redact = true;
     else if (a === '--logs') o.logs = path.resolve(next() || o.logs);
+    else if (a === '--statusline') o.statusline = path.resolve(next() || o.statusline);
+    else if (a === '--no-usage') o.usage = false;
+    else if (a === '--projects') o.projects = path.resolve(next() || o.projects);
+    else if (a === '--config') o.config = path.resolve(next() || o.config);
     else if (a === '--help' || a === '-h') {
-      console.log('usage: node server.mjs [--port N] [--replay file.jsonl --speed N] [--redact] [--logs DIR]');
+      console.log('usage: node server.mjs [--port N] [--replay file.jsonl --speed N] [--redact] [--logs DIR] [--statusline DIR]\n' +
+        '                        [--no-usage] [--projects DIR] [--config DIR]\n' +
+        '  --config DIR  building.json / pricing.json (default ~/.claude/ai-team-office/, falls back to reading office/)');
       process.exit(0);
     }
   }
@@ -35,6 +50,49 @@ const isMain = !!process.argv[1] && realpath(process.argv[1]) === realpath(fileU
 const opt = isMain ? parseArgs(process.argv.slice(2)) : parseArgs([]);
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 
+// ---------- usage + config ----------
+// building.json / pricing.json are user config and live OUTSIDE the code folder (a plugin update replaces it):
+//   --config DIR (read + write)  >  ~/.claude/ai-team-office/ (read + write)  >  office/ itself (read-only, old installs).
+// On first start without --config, config files found only in office/ are copied to ~/.claude/ai-team-office/.
+export const CONFIG_FILES = ['building.json', 'pricing.json'];
+export const configHome = (home = HOME) => path.join(home, '.claude', 'ai-team-office');
+
+/** Path to read `name` from. explicit = --config dir (or null); legacy = the code folder (read-only fallback). */
+export function configPath(name, { explicit = null, home = configHome(), legacy = ROOT } = {}) {
+  if (explicit) return path.join(explicit, name);
+  const cur = path.join(home, name);
+  if (fs.existsSync(cur)) return cur;
+  const old = path.join(legacy, name);
+  return fs.existsSync(old) ? old : cur;
+}
+/** Directory POST /building.json writes into (created mode 700 on first write). */
+export const configWriteDir = ({ explicit = null, home = configHome() } = {}) => explicit || home;
+
+/** Copy config files that exist only in the legacy folder into the config home (once; never overwrites). */
+export function migrateConfig({ home = configHome(), legacy = ROOT, log: say = () => {} } = {}) {
+  const moved = [];
+  for (const name of CONFIG_FILES) {
+    const from = path.join(legacy, name), to = path.join(home, name);
+    try {
+      if (!fs.existsSync(from) || fs.existsSync(to) || fs.lstatSync(from).isSymbolicLink()) continue;
+      fs.mkdirSync(home, { recursive: true, mode: 0o700 });
+      fs.copyFileSync(from, to, fs.constants.COPYFILE_EXCL);
+      fs.chmodSync(to, 0o600);
+      moved.push(name);
+    } catch (err) { say(`config: could not copy ${name} to ${home}: ${err.message}`); }
+  }
+  if (moved.length) say(`config: copied ${moved.join(', ')} from ${legacy} to ${home} (edit it there from now on; the old copy is no longer written)`);
+  return moved;
+}
+
+let usage = null;                       // Usage tracker (live mode without --no-usage)
+let usageReady = Promise.resolve();     // resolves when today's transcripts have been read once
+const cfgOpt = () => ({ explicit: opt.config });
+const building = () => loadJson(configPath('building.json', cfgOpt()), log);
+const pricing = () => loadJson(configPath('pricing.json', cfgOpt()), log);
+/** Usage records carry no paths; proj is already a basename. --redact keeps it that way defensively. */
+const usageOut = r => (opt.redact && typeof r.proj === 'string' ? { ...r, proj: path.basename(r.proj) } : r);
+
 // ---------- event pipeline ----------
 /** Local midnight (process TZ) of the day containing `now`, in epoch ms. "Today" = ts >= dayStart(). */
 export const dayStart = (now = Date.now()) => { const d = new Date(now); d.setHours(0, 0, 0, 0); return d.getTime(); };
@@ -42,6 +100,29 @@ const tsMs = e => Date.parse(e && (e.ts || ''));
 const history = [];            // events already emitted, sent to each new client (today's part) as a replay burst
 const HISTORY_MAX = 20000;
 const clients = new Set();
+/** Dashboards = /events clients whose Origin/Referer is this server's own origin (EventSource from the page sends it;
+ *  curl and other bare SSE readers do not). Only VISIBLE ones keep relay items waiting: a background tab reports
+ *  {visible:false} via POST /viewer and stops counting. res.vid = the page's viewer id, res.visible = its state. */
+const viewers = new Set();
+const visibleViewers = () => { let n = 0; for (const r of viewers) if (r.visible !== false) n++; return n; };
+function releaseIfNoViewer(why) {
+  if (visibleViewers()) return;
+  const n = relay.releaseAll('no-viewer');
+  if (n) log(`대표실: ${why}, released ${n} pending`);
+}
+
+/** Per-process viewer token: delivered ONLY inside the served index.html (<meta name="office-token">), never on the
+ *  SSE stream. answer/release/pending/viewer require it in X-Office-Token. */
+const TOKEN = crypto.randomBytes(32).toString('hex');
+const tokenOk = t => typeof t === 'string' && t.length === TOKEN.length && crypto.timingSafeEqual(Buffer.from(t), Buffer.from(TOKEN));
+
+/** Caller-process check (relay.mjs checkCaller). OFFICE_TEST_ANCESTRY="comm,comm,…" (child first) swaps in a fake
+ *  process tree — tests only; the real check runs otherwise. */
+const peerRun = process.env.OFFICE_TEST_ANCESTRY ? fakeAncestryRunner(process.env.OFFICE_TEST_ANCESTRY.split(',')) : execRunner;
+const peerPlatform = process.env.OFFICE_TEST_ANCESTRY ? 'darwin' : process.platform;
+let peerFallbackLogged = false;
+/** Project names seen and alias -> project (launch-dir / cwd basename -> root name) for building.json keys. */
+const seenProj = new Set(), aliases = new Map();
 
 const homeRe = new RegExp(HOME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
 const unhome = v => (typeof v === 'string' ? v.replace(homeRe, '~') : v);
@@ -94,11 +175,25 @@ function send(res, frame) {
   if (!res.write(frame)) res.congested = true;
 }
 
+/** 대표실 relay: `event: ceo` frames ({type: ask|answered|resolved|withdrawn|snapshot}) go to every live client. */
+const relay = new Relay({
+  broadcast: o => { const frame = `event: ceo\ndata: ${JSON.stringify(o)}\n\n`; for (const res of clients) send(res, frame); },
+  redact: opt.redact, logFile: path.join(opt.logs, 'ceo-decisions.jsonl'), log,
+  redactTarget: (tool, target) => redact({ ev: 'PermissionRequest', tool, target }).target,
+  projOf: projectName,
+});
+
 /** One normalised (and, with --redact, redacted) event to history + every live client. Never throws. */
 function emit(raw) {
   try {
     const e = norm(slim(raw));
     if (!e) return;
+    // office-events.sh logs proj = basename of the CURRENT cwd; map it to the project root (subfolders, worktrees).
+    if (typeof e.cwd === 'string') {
+      const name = projectName(e.cwd);
+      if (name) { if (e.proj && e.proj !== name && aliases.size < 5000) aliases.set(e.proj, name); e.proj = name; }
+    }
+    if (typeof e.proj === 'string' && e.proj && seenProj.size < 5000) seenProj.add(e.proj);
     const out = opt.redact ? redact(e) : e;
     history.push(out);
     if (history.length > HISTORY_MAX) history.splice(0, history.length - HISTORY_MAX);
@@ -166,7 +261,12 @@ class Tail {
 
 function startLive() {
   const files = ['office-events.jsonl', 'delegation.jsonl'].map(f => path.join(opt.logs, f));
-  const tails = files.map(f => new Tail(f, evs => byTs(evs).forEach(emit)));
+  const tails = files.map((f, i) => new Tail(f, evs => {
+    const sorted = byTs(evs);
+    sorted.forEach(emit);
+    // Live office-events lines tell the relay when the terminal answered first (or the session moved on).
+    if (i === 0) for (const e of sorted) { try { relay.observe(norm(e)); } catch (err) { log('relay observe:', err.message); } }
+  }));
   byTs(tails.flatMap(t => t.initial())).forEach(emit);
   log(`replayed ${history.length} of today's events from ${opt.logs}`);
   const checkAll = () => tails.forEach(t => t.check());
@@ -178,6 +278,30 @@ function startLive() {
   // Polling: 500ms when watch is unavailable; a slow safety poll otherwise (missed FSEvents, dir created later).
   let last = 0;
   setInterval(() => { const now = Date.now(); if (!watching || now - last >= 5000) { last = now; checkAll(); } }, 500);
+  if (opt.usage) startUsage();
+  startLimits();
+}
+
+/** Plan limits + context windows from the statusline files; `event: limits` carries the full snapshot on change. */
+let limits = null;
+/** Never throws: a bad statusline file must not kill /events or /limits.json. */
+function limitsNow() {
+  try { return limits ? limits.get() : null; } catch (err) { log('limits snapshot failed:', err.message); return null; }
+}
+
+function startLimits() {
+  limits = new Limits({ dir: opt.statusline, log, redact: opt.redact,
+    onChange: snap => { const frame = `event: limits\ndata: ${JSON.stringify(snap)}\n\n`; for (const res of clients) send(res, frame); } });
+  limits.start();
+}
+
+function startUsage() {
+  usage = new Usage({ dir: opt.projects, pricingFile: configPath('pricing.json', cfgOpt()), log,
+    onRecord: r => { const frame = `event: usage\ndata: ${JSON.stringify(usageOut(r))}\n\n`; for (const res of clients) send(res, frame); } });
+  const t0 = Date.now();
+  usageReady = usage.start()
+    .then(() => log(`usage: ${usage.records.size} messages today from ${usage.fileCount} transcripts in ${Date.now() - t0}ms`))
+    .catch(err => log('usage scan failed:', err.message));
 }
 
 /** Re-emit a jsonl file with time compression; ts rewritten to the moment of emission. */
@@ -218,16 +342,21 @@ function sseOpen(req, res) {
   req.on('close', () => { clearInterval(ka); clients.delete(res); });
 }
 
-/** History burst, then `ready` {mode, redact, count, dayStart}. dayStart = local midnight (epoch ms) that "today"
- *  was cut at; a client resets its daily stats when its clock passes dayStart + 24h. */
-function sendBurst(res, list) {
+/** History burst, usage burst, then `ready` {mode, redact, count, dayStart, usage, usageFiles, usageCount, hasPricing,
+ *  building}. dayStart = local midnight (epoch ms) that "today" was cut at; a client resets its daily stats when its
+ *  clock passes dayStart + 24h. usage-batch frames (<= 1000 records each, <= 5000 in all) all precede `ready`. */
+function sendBurst(res, list, useUsage = false) {
   for (let i = 0; i < list.length; i += 500) res.write(`event: batch\ndata: ${JSON.stringify(list.slice(i, i + 500))}\n\n`);
-  const info = { mode: opt.replay ? 'replay' : 'live', redact: opt.redact, count: list.length, dayStart: dayStart() };
+  const recs = useUsage && usage ? usage.batch().map(usageOut) : [];
+  for (let i = 0; i < recs.length; i += 1000) res.write(`event: usage-batch\ndata: ${JSON.stringify(recs.slice(i, i + 1000))}\n\n`);
+  const info = { mode: opt.replay ? 'replay' : 'live', redact: opt.redact, count: list.length, dayStart: dayStart(),
+    usage: !!(useUsage && usage), usageFiles: useUsage && usage ? usage.fileCount : 0, usageCount: recs.length,
+    hasPricing: !!(usage && usage.hasPricing), building: servedBuilding(), limits: limitsNow() };
   res.write(`event: ready\ndata: ${JSON.stringify(info)}\n\n`);
   res.primed = !res.writableNeedDrain;
 }
 
-function handleEvents(req, res, url) {
+async function handleEvents(req, res, url) {
   sseOpen(req, res);
   if (url.searchParams.get('sim') === '1') {        // per-client simulator: sample fixture, no live data
     let alive = true;
@@ -241,9 +370,65 @@ function handleEvents(req, res, url) {
     }, () => alive && !res.writableEnded);
     return;
   }
+  await usageReady;                                  // first clients wait for the initial transcript scan
+  if (res.destroyed || res.writableEnded) return;
   const d0 = dayStart();
-  sendBurst(res, opt.replay ? history : history.filter(e => tsMs(e) >= d0));
+  sendBurst(res, opt.replay ? history : history.filter(e => tsMs(e) >= d0), true);
+  res.write(`event: ceo\ndata: ${JSON.stringify({ type: 'snapshot', items: relay.list() })}\n\n`);
   clients.add(res);
+  if (isViewer(req)) {
+    const vid = url.searchParams.get('vid');
+    if (vid && VID_RE.test(vid)) res.vid = vid;
+    res.visible = url.searchParams.get('visible') !== '0';
+    viewers.add(res);
+    res.on('close', () => { viewers.delete(res); releaseIfNoViewer('last visible dashboard closed'); });
+  }
+}
+
+/** Origin or Referer pointing at this server (loopback host, same port). */
+export function sameServerOrigin(headers, port) {
+  for (const h of [headers.origin, headers.referer]) {
+    if (typeof h !== 'string') continue;
+    try {
+      const u = new URL(h);
+      if (u.protocol === 'http:' && LOCAL_HOST.test(u.host) && Number(u.port || 80) === port) return true;
+    } catch {}
+  }
+  return false;
+}
+const isViewer = req => sameServerOrigin(req.headers, req.socket.localPort);
+const VID_RE = /^[A-Za-z0-9_-]{8,64}$/;
+
+/** Strict form for state-changing dashboard calls: the Origin header itself (no Referer, no "missing is fine") must be
+ *  this server's own loopback origin. */
+export function ownOrigin(origin, port) {
+  if (typeof origin !== 'string') return false;
+  try {
+    const u = new URL(origin);
+    return u.protocol === 'http:' && LOCAL_HOST.test(u.host) && Number(u.port || 80) === port && origin === u.origin;
+  } catch { return false; }
+}
+
+/** Dashboard-only gate: own Origin + viewer token; for answer/release (decide=true) also the caller-process check.
+ *  Sends the 403 and returns false when refused. */
+async function dashboardGate(req, res, { decide = false } = {}) {
+  const deny = msg => { sendJson(res, 403, { error: msg }, { Connection: 'close' }); return false; };
+  if (!ownOrigin(req.headers.origin, req.socket.localPort)) return deny('forbidden origin (dashboard calls need this server\'s Origin)');
+  if (!tokenOk(req.headers['x-office-token'])) return deny('missing or wrong X-Office-Token (reload the dashboard)');
+  if (!decide) return true;
+  let c;
+  try { c = await checkCaller(req.socket.remotePort, { run: peerRun, platform: peerPlatform }); }
+  catch (err) { c = { verdict: 'unchecked', detail: err.message }; }
+  if (c.verdict === 'agent') {
+    log(`대표실: refused an answer from an agent process (${c.chain.map(p => `${p.pid}:${path.basename(p.comm)}`).join(' <- ')})`);
+    return deny('agent processes cannot answer');
+  }
+  if (c.verdict === 'unknown') return deny(`could not verify the calling process (${c.detail})`);
+  if (c.verdict === 'unchecked' && !peerFallbackLogged) {
+    peerFallbackLogged = true;
+    log(`대표실: caller-process check unavailable (${c.detail}); relying on Origin + token only`);
+  }
+  return !res.writableEnded;
 }
 
 function serveStatic(req, res, url) {
@@ -255,10 +440,201 @@ function serveStatic(req, res, url) {
   if (!file.startsWith(PUBLIC + path.sep)) { res.writeHead(403).end('forbidden'); return; }
   fs.readFile(file, (err, buf) => {
     if (err) { res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }).end('not found'); return; }
+    if (file === path.join(PUBLIC, 'index.html')) {
+      const html = buf.toString('utf8').replace('<head>', `<head>\n  <meta name="office-token" content="${TOKEN}">`);
+      res.writeHead(200, { 'Content-Type': MIME['.html'], 'Cache-Control': 'no-store', 'Referrer-Policy': 'same-origin' }).end(html);
+      return;
+    }
     res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' }).end(buf);
   });
 }
 
+// ---------- floor editor endpoints ----------
+let projCache = { at: 0, list: null };
+function projectsJson() {
+  if (!projCache.list || Date.now() - projCache.at > 10000) {
+    projCache = { at: Date.now(), list: scanProjects(opt.projects, Date.now(), { aliases }) };
+    if (aliases.size > 5000) aliases.clear();
+  }
+  return opt.redact ? projCache.list.map(({ cwd, ...r }) => r) : projCache.list;
+}
+
+/** building.json as served (ready.building, GET /building.json): a floors key that is not a known project name is
+ *  mapped to the project it stands for — via an alias (launch-dir / cwd basename -> project root name) or an equal
+ *  encodeDir ("web-ui" -> "web_ui"). An exact key wins over a mapped duplicate. Keys still unmatched
+ *  are kept and listed in `unknownKeys` so the editor can flag them. The file itself is not rewritten. */
+export function normaliseBuilding(b, known, alias = new Map()) {
+  if (!b || typeof b !== 'object' || !b.floors || typeof b.floors !== 'object' || Array.isArray(b.floors)) return b;
+  const knownSet = new Set(known), byEnc = new Map();
+  for (const p of knownSet) if (!byEnc.has(encodeDir(p))) byEnc.set(encodeDir(p), p);
+  const target = k => (knownSet.has(k) ? k : alias.has(k) && knownSet.has(alias.get(k)) ? alias.get(k) : byEnc.get(encodeDir(k)) ?? null);
+  const entries = Object.entries(b.floors), floors = Object.create(null), unknownKeys = [];
+  for (const [k, v] of entries) if (target(k) === k) floors[k] = v;
+  for (const [k, v] of entries) {
+    const t = target(k);
+    if (t === k) continue;
+    if (t == null) { unknownKeys.push(k); floors[k] = v; } else if (!(t in floors)) floors[t] = v;
+  }
+  const { unknownKeys: _, ...rest } = b;
+  return { ...rest, floors: { ...floors }, unknownKeys };
+}
+const knownProjects = () => [...projectsJson().map(p => p.proj), ...seenProj];
+const servedBuilding = () => normaliseBuilding(building(), knownProjects(), aliases);
+
+const BODY_MAX = 64 * 1024;
+const CTRL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
+/** Strict validation of the POST /building.json body. Returns {error} or {value}. */
+export function validateBuilding(b) {
+  if (!b || typeof b !== 'object' || Array.isArray(b)) return { error: 'body must be an object' };
+  for (const k of Object.keys(b)) if (k !== 'ceo' && k !== 'floors' && k !== 'unknownKeys') return { error: `unknown key: ${k.slice(0, 40)}` };   // unknownKeys (served, informational) is dropped
+  const out = {};
+  if (b.ceo !== undefined) {
+    if (typeof b.ceo !== 'string' || b.ceo.length > 40 || CTRL.test(b.ceo)) return { error: 'ceo must be a string <= 40 chars without control characters' };
+    out.ceo = b.ceo;
+  }
+  const f = b.floors;
+  if (!f || typeof f !== 'object' || Array.isArray(f)) return { error: 'floors must be an object' };
+  const entries = Object.entries(f);
+  if (entries.length > 200) return { error: 'too many floors (max 200)' };
+  out.floors = Object.create(null);
+  for (const [proj, v] of entries) {
+    if (!proj || proj.length > 200 || CTRL.test(proj) || proj === '__proto__') return { error: 'bad project name' };
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return { error: `floor entry for ${proj} must be an object` };
+    for (const k of Object.keys(v)) if (k !== 'floor' && k !== 'label') return { error: `unknown key in ${proj}: ${k.slice(0, 40)}` };
+    if (!Number.isInteger(v.floor) || v.floor < 1 || v.floor > 99) return { error: `floor for ${proj} must be an integer 1..99` };
+    if (typeof v.label !== 'string' || v.label.length > 40 || CTRL.test(v.label)) return { error: `label for ${proj} must be a string <= 40 chars without control characters` };
+    out.floors[proj] = { floor: v.floor, label: v.label };
+  }
+  out.floors = { ...out.floors };
+  return { value: out };
+}
+
+function readBody(req, max) {
+  return new Promise((resolve, reject) => {
+    const chunks = []; let n = 0;
+    req.on('data', c => {
+      n += c.length;
+      if (n > max) { reject(Object.assign(new Error('body too large'), { status: 413 })); req.destroy(); return; }
+      chunks.push(c);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', reject);
+  });
+}
+
+async function saveBuilding(req, res) {
+  const text = o => ({ 'Content-Type': 'text/plain; charset=utf-8', ...o });
+  const fail = (code, msg) => { res.writeHead(code, text({ Connection: 'close' })).end(msg + '\n'); };
+  if (!okOrigin(req.headers.origin)) return fail(403, 'forbidden origin');
+  if (!/^application\/json\s*(;|$)/i.test(req.headers['content-type'] || '')) return fail(415, 'content-type must be application/json');
+  if (Number(req.headers['content-length']) > BODY_MAX) { req.resume(); return fail(413, 'body too large (max 64KB)'); }
+  let parsed;
+  try { parsed = JSON.parse(await readBody(req, BODY_MAX)); }
+  catch (err) { return fail(err.status || 400, err.status ? 'body too large (max 64KB)' : 'invalid JSON'); }
+  const v = validateBuilding(parsed);
+  if (v.error) return fail(400, v.error);
+  const dir = configWriteDir(cfgOpt()), file = path.join(dir, 'building.json');
+  try { fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); } catch (err) { log('config dir create failed:', err.message); return fail(500, 'cannot create config dir'); }
+  try {
+    if (fs.lstatSync(file).isSymbolicLink()) return fail(409, 'building.json is a symlink; refusing to write');
+  } catch (err) { if (err.code !== 'ENOENT') return fail(500, 'cannot stat building.json'); }
+  const json = JSON.stringify(v.value, null, 2) + '\n';
+  const tmpFile = `${file}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    fs.writeFileSync(tmpFile, json, { flag: 'wx', mode: 0o644 });
+    fs.renameSync(tmpFile, file);
+  } catch (err) {
+    try { fs.unlinkSync(tmpFile); } catch {}
+    log('building.json write failed:', err.message);
+    return fail(500, 'write failed');
+  }
+  res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-cache' }).end(json);
+}
+
+// ---------- 대표실 relay endpoints ----------
+const ASK_MAX = 1 << 20, ANSWER_BODY_MAX = 16 * 1024;
+const sendJson = (res, code, o, extra = {}) => {
+  if (res.destroyed || res.writableEnded) return;
+  res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-cache', ...extra }).end(JSON.stringify(o));
+};
+
+/** JSON body or a response already sent (returns undefined). */
+async function jsonBody(req, res, max) {
+  if (!/^application\/json\s*(;|$)/i.test(req.headers['content-type'] || '')) { sendJson(res, 415, { error: 'content-type must be application/json' }, { Connection: 'close' }); return; }
+  if (Number(req.headers['content-length']) > max) { req.resume(); sendJson(res, 413, { error: 'body too large' }, { Connection: 'close' }); return; }
+  try { return JSON.parse(await readBody(req, max)); }
+  catch (err) { sendJson(res, err.status || 400, { error: err.status ? 'body too large' : 'invalid JSON' }, { Connection: 'close' }); }
+}
+
+/** POST /relay/ask (hook script: {id, kind, decision|null}) and /relay/hook (`http` hook: final hook JSON or {}).
+ *  Holds the response until the dashboard answers, waitMs passes, the terminal answers first, or the hook hangs up.
+ *  With no dashboard (viewer) connected it answers "no decision" at once so the native prompt is never held up for
+ *  nobody; when the last dashboard closes, every pending item is released the same way (`no-viewer`). */
+async function relayAsk(req, res, url, asHook) {
+  const raw = await jsonBody(req, res, ASK_MAX);
+  if (raw === undefined) return;
+  const none = reason => sendJson(res, 200, asHook ? {} : { id: null, decision: null, reason });
+  if (!visibleViewers()) return none('no-viewer');
+  const alive = () => !res.destroyed && !res.writableEnded && !!res.socket && !res.socket.destroyed && res.socket.writable;
+  const r = relay.ask(raw, parseWait(url.searchParams.get('waitMs')), { alive });
+  if (r.error) return asHook ? none(r.error) : sendJson(res, r.status, { error: r.error });
+  res.on('close', () => { if (!res.writableFinished) relay.withdraw(r.id); });
+  const { decision, by } = await r.wait;
+  if (asHook) sendJson(res, 200, hookOutput(r.item.kind, r.toolInput, decision));
+  else sendJson(res, 200, { id: r.id, kind: r.item.kind, decision, by });
+}
+
+async function relayAnswer(req, res) {
+  if (!(await dashboardGate(req, res, { decide: true }))) { req.resume(); return; }
+  const b = await jsonBody(req, res, ANSWER_BODY_MAX);
+  if (b === undefined) return;
+  if (!b || typeof b !== 'object' || Array.isArray(b)) return sendJson(res, 400, { error: 'body must be {id, decision}' });
+  const r = relay.answer(b.id, b.decision);
+  if (r.status !== 200) return sendJson(res, r.status, { error: r.error });
+  log(`대표실: ${r.item.kind} ${r.item.tool} ${r.decision.behavior || 'answered'} (${r.item.sid.slice(0, 8)})`);
+  sendJson(res, 200, { ok: true, id: b.id, decision: r.decision });
+}
+
+/** POST /relay/release {id}: 돌려보내기 — resolve the long-poll with no decision (native terminal prompt takes over). */
+async function relayRelease(req, res) {
+  if (!(await dashboardGate(req, res, { decide: true }))) { req.resume(); return; }
+  const b = await jsonBody(req, res, ANSWER_BODY_MAX);
+  if (b === undefined) return;
+  if (!b || typeof b !== 'object' || Array.isArray(b)) return sendJson(res, 400, { error: 'body must be {id}' });
+  const r = relay.release(b.id);
+  if (r.status !== 200) return sendJson(res, r.status, { error: r.error });
+  log(`대표실: ${r.item.kind} ${r.item.tool} released to the terminal (${r.item.sid.slice(0, 8)})`);
+  sendJson(res, 200, { ok: true, id: b.id, released: true });
+}
+
+/** POST /viewer {vid, visible}: the page went to the background (or came back). Hidden tabs do not count as viewers;
+ *  when the last visible one goes, pending items are released as no-viewer (the terminal prompt takes over). */
+async function setViewer(req, res) {
+  if (!(await dashboardGate(req, res))) { req.resume(); return; }
+  const b = await jsonBody(req, res, 1024);
+  if (b === undefined) return;
+  if (!b || typeof b !== 'object' || typeof b.vid !== 'string' || typeof b.visible !== 'boolean') return sendJson(res, 400, { error: 'body must be {vid, visible:boolean}' });
+  let hit = 0;
+  for (const r of viewers) if (r.vid === b.vid) { r.visible = b.visible; hit++; }
+  if (!hit) return sendJson(res, 404, { error: 'no open dashboard with that vid' });
+  if (!b.visible) releaseIfNoViewer('last visible dashboard went to the background');
+  sendJson(res, 200, { ok: true, visible: b.visible, viewers: visibleViewers() });
+}
+
+function handleRelay(req, res, url) {
+  if (!okOrigin(req.headers.origin)) { res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' }).end('forbidden origin\n'); return; }
+  const route = { '/relay/ask': 'POST', '/relay/hook': 'POST', '/relay/answer': 'POST', '/relay/release': 'POST', '/relay/pending': 'GET' }[url.pathname];
+  if (!route) { res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }).end('not found\n'); return; }
+  if (req.method !== route) { res.writeHead(405, { Allow: route }).end(); return; }
+  if (url.pathname === '/relay/pending') {
+    dashboardGate(req, res).then(ok => { if (ok) sendJson(res, 200, relay.list()); }).catch(err => { log('relay error', err.message); sendJson(res, 500, { error: 'error' }); });
+    return;
+  }
+  const p = url.pathname === '/relay/answer' ? relayAnswer(req, res) : url.pathname === '/relay/release' ? relayRelease(req, res) : relayAsk(req, res, url, url.pathname === '/relay/hook');
+  p.catch(err => { log('relay error', err.message); try { sendJson(res, 500, { error: 'error' }); } catch {} });
+}
+
+const focusLimit = makeLimiter(1000);
 function handle(req, res) {
   try {
     if (!okHost(req.headers.host)) {
@@ -269,10 +645,50 @@ function handle(req, res) {
     if (url.pathname === '/events') {
       if (req.method !== 'GET') { res.writeHead(405, { Allow: 'GET' }).end(); return; }
       if (!okOrigin(req.headers.origin)) { res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' }).end('forbidden origin\n'); return; }
-      return handleEvents(req, res, url);
+      handleEvents(req, res, url).catch(err => { log('events error', err.message); try { res.end(); } catch {} });
+      return;
+    }
+    if (url.pathname.startsWith('/relay/')) { handleRelay(req, res, url); return; }
+    if (url.pathname === '/viewer') {
+      if (req.method !== 'POST') { res.writeHead(405, { Allow: 'POST' }).end(); return; }
+      setViewer(req, res).catch(err => { log('viewer error', err.message); try { sendJson(res, 500, { error: 'error' }); } catch {} });
+      return;
+    }
+    if (url.pathname === '/building.json' && req.method === 'POST') {
+      saveBuilding(req, res).catch(err => { log('save error', err.message); try { res.writeHead(500).end(); } catch {} });
+      return;
+    }
+    if (url.pathname === '/focus') {
+      const json = (code, o) => res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-cache' }).end(JSON.stringify(o));
+      if (req.method !== 'GET') { res.writeHead(405, { Allow: 'GET' }).end(); return; }
+      if (!okOrigin(req.headers.origin)) { res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' }).end('forbidden origin\n'); return; }
+      const sid = url.searchParams.get('sid') || '';
+      if (!SID_RE.test(sid)) { json(400, { ok: false, method: 'none', detail: 'bad sid' }); return; }
+      if (!focusLimit()) { res.writeHead(429, { 'Content-Type': 'application/json; charset=utf-8', 'Retry-After': '1' }).end(JSON.stringify({ ok: false, method: 'none', detail: 'rate limited' })); return; }
+      focusSession(sid, { projectsDir: opt.projects }).then(r => json(200, r), err => { log('focus error', err.message); json(500, { ok: false, method: 'none', detail: 'error' }); });
+      return;
+    }
+    if (url.pathname === '/limits.json') {
+      if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405, { Allow: 'GET, HEAD' }).end(); return; }
+      if (!okOrigin(req.headers.origin)) { res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' }).end('forbidden origin\n'); return; }
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-cache' }).end(req.method === 'HEAD' ? undefined : JSON.stringify(limitsNow()));
+      return;
+    }
+    if (url.pathname === '/projects.json') {
+      if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405, { Allow: 'GET, HEAD' }).end(); return; }
+      if (!okOrigin(req.headers.origin)) { res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' }).end('forbidden origin\n'); return; }
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-cache' }).end(req.method === 'HEAD' ? undefined : JSON.stringify(projectsJson()));
+      return;
+    }
+    if (url.pathname === '/building.json' || url.pathname === '/pricing.json') {
+      if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405, { Allow: 'GET, HEAD, POST' }).end(); return; }
+      if (!okOrigin(req.headers.origin)) { res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' }).end('forbidden origin\n'); return; }
+      const body = JSON.stringify((url.pathname === '/building.json' ? servedBuilding() : pricing()) || {});
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-cache' }).end(req.method === 'HEAD' ? undefined : body);
+      return;
     }
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405, { Allow: 'GET, HEAD' }).end(); return; }
-    if (url.pathname === '/healthz') { res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: true, events: history.length, clients: clients.size })); return; }
+    if (url.pathname === '/healthz') { res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: true, events: history.length, clients: clients.size, viewers: visibleViewers(), hiddenViewers: viewers.size - visibleViewers(), pending: relay.pending.size, usage: usage ? usage.records.size : null })); return; }
     serveStatic(req, res, url);
   } catch (err) { log('request error', err.message); try { res.writeHead(500).end(); } catch {} }
 }
@@ -280,11 +696,12 @@ function handle(req, res) {
 if (isMain) {
   process.on('uncaughtException', err => log('uncaught (kept alive):', err && err.stack || err));
   process.on('unhandledRejection', err => log('unhandled rejection (kept alive):', err));
+  if (!opt.config) migrateConfig({ log });
   const server = http.createServer(handle);
   server.on('error', err => { log('server error:', err.message); if (err.code === 'EADDRINUSE') process.exit(1); });
   server.listen(opt.port, '127.0.0.1', () => {
     const port = server.address().port;
-    log(`AI Team Office on http://127.0.0.1:${port}  mode=${opt.replay ? `replay ${opt.replay} x${opt.speed}` : 'live'}${opt.redact ? ' redact' : ''}`);
+    log(`AI Team Office on http://127.0.0.1:${port}  mode=${opt.replay ? `replay ${opt.replay} x${opt.speed}` : 'live'}${opt.redact ? ' redact' : ''}${opt.usage && !opt.replay ? '' : ' no-usage'}`);
     if (opt.replay) replayFile(opt.replay, opt.speed, emit);
     else startLive();
   });

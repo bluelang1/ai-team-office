@@ -7,65 +7,92 @@
   <title>AI Team Office</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="secretary.css">
 </head>
 <body>
   <header class="top">
-    <div class="brand"><span class="logo" aria-hidden="true"></span><span>AI Team Office</span></div>
-    <nav class="tabs floors" id="floors" aria-label="층 (프로젝트)"></nav>
-    <nav class="tabs roomtabs" id="roomtabs" aria-label="방 (세션)"></nav>
+    <div class="brand"><i class="ico logo" style="--i:var(--ico-tower)"></i><span>AI Team Office</span></div>
     <div class="top-right">
-      <span class="pill amber" id="needs" hidden>🙋 승인 대기 <b>0</b></span>
+      <button type="button" class="pill amber" id="needs" hidden title="대표실로">🙋 대표님 호출 <b>0</b></button>
       <span class="conn" id="conn" data-state="wait">연결 중…</span>
-      <button class="icon-btn" id="sound" type="button" title="승인 대기 소리 알림 (기본 무음)" aria-pressed="false">🔕</button>
-      <button class="icon-btn" id="theme" type="button" title="테마: 자동">◐</button>
+      <button class="ib" id="sound" type="button" title="대표실 호출 소리 (기본 무음)" aria-pressed="false">🔕</button>
+      <button class="ib" id="theme" type="button" title="테마: 자동">◐</button>
     </div>
   </header>
 
   <main class="layout">
-    <section class="scene-wrap" aria-label="사무실">
-      <div class="scene" id="scene">
-        <div class="room" data-room="library" style="--x:2;--y:3;--w:23;--h:31"><h3>자료실</h3>
-          <div class="shelf"></div><div class="shelf"></div><div class="shelf"></div></div>
-        <div class="room" data-room="meeting" style="--x:27;--y:3;--w:27;--h:31"><h3>회의실</h3>
-          <div class="table-round"></div></div>
-        <div class="room" data-room="review" style="--x:56;--y:3;--w:22;--h:31"><h3>검수실</h3>
-          <div class="review-desk"><span class="lens"></span></div></div>
-        <div class="room elevator" data-room="elevator" style="--x:80;--y:3;--w:18;--h:31"><h3>엘리베이터</h3>
-          <div class="lift"><span class="lamp"></span><div class="door l"></div><div class="door r"></div></div></div>
-        <div class="room open-floor" data-room="floor" style="--x:2;--y:36;--w:96;--h:28"><h3>사무실</h3>
-          <div class="desk sub" data-desk="0" style="--dx:9"></div>
-          <div class="desk sub" data-desk="1" style="--dx:19.5"></div>
-          <div class="desk sub" data-desk="2" style="--dx:30"></div>
-          <div class="desk main" data-desk="main" style="--dx:50"><span class="plate">Fable</span></div>
-          <div class="desk sub" data-desk="3" style="--dx:70"></div>
-          <div class="desk sub" data-desk="4" style="--dx:80.5"></div>
-          <div class="desk sub" data-desk="5" style="--dx:91"></div>
-        </div>
-        <div class="room" data-room="server" style="--x:2;--y:66;--w:30;--h:31"><h3>서버실</h3>
-          <div class="racks"><div class="rack"><i></i><i></i><i></i></div><div class="rack"><i></i><i></i><i></i></div><div class="rack"><i></i><i></i><i></i></div></div></div>
-        <div class="room" data-room="bench" style="--x:34;--y:66;--w:32;--h:31"><h3>작업대</h3>
-          <div class="workbench"><span></span><span></span></div></div>
-        <div class="room" data-room="external" style="--x:68;--y:66;--w:30;--h:31"><h3>외부창구</h3>
-          <div class="window-counter"><span class="glass"></span></div></div>
-        <div class="sprites" id="sprites"></div>
-        <div class="empty" id="empty">빈 사무실이에요. 오늘 기록된 이벤트가 아직 없어요.</div>
+    <aside class="bld" id="building" aria-label="건물 (층 = 프로젝트)"></aside>
+
+    <section class="scene-wrap" id="scene-wrap" aria-label="사무실">
+      <div class="stage-h" id="stage-h">
+        <b class="floor-title" id="floor-title">—</b>
+        <nav class="hotbar" id="roomtabs" aria-label="방 (세션)"></nav>
       </div>
-      <p class="legend">
+      <div class="stage-box" id="stage-box">
+      <div class="stage" id="stage">
+        <div class="scene" id="scene">
+          <canvas class="world" id="world" width="416" height="344" aria-hidden="true"></canvas>
+          <canvas class="world" id="fx" width="416" height="344" aria-hidden="true"></canvas>
+          <div class="labels" id="labels"></div>
+          <div class="elevator" data-room="elevator" title="엘리베이터"><span class="ind"><i class="arr">▲</i><b class="flno">1</b></span>
+            <div class="lift"><div class="door l"></div><div class="door r"></div></div></div>
+          <span class="plate" id="plate">실장</span><span class="deskctx" id="deskctx" hidden role="img"><i></i></span><i class="memo" id="memo" title="대표님 지시서"></i>
+          <div class="sprites" id="sprites"></div>
+          <div class="scene-empty" id="empty">빈 사무실이에요. 오늘 기록된 이벤트가 아직 없어요.</div>
+        </div>
+        <div class="overview" id="overview" hidden></div>
+        <section class="ceo-room" id="ceo" aria-label="대표실">
+          <button type="button" class="ceo-h" id="ceo-h" aria-expanded="false"><i class="ico" style="--i:var(--ico-crown)"></i><b>대표실</b>
+            <span class="ceo-mini"><canvas class="mclock" id="mclock" width="26" height="26" aria-hidden="true"></canvas><span class="ceo-date" id="ceo-date"></span></span>
+            <span class="ceo-n" id="ceo-n">대기 0</span><span class="bellb" id="ceo-bell" hidden><i class="ico" style="--i:var(--ico-bell)"></i><b>0</b></span></button>
+          <button type="button" class="ceo-all" id="ceo-all" hidden title="모두 결정 없이 돌려보내요. 질문·승인은 터미널에서 계속 받을 수 있어요">모두 돌려보내기</button>
+          <div class="ceo-body">
+            <div class="ceo-wall">
+              <div class="cal" id="cal" role="img"><i class="rings" aria-hidden="true"></i><span class="cal-ymd"></span><b class="cal-d"></b><span class="cal-w"></span></div>
+              <canvas class="wclock" id="wclock" width="26" height="26" role="img" aria-label="벽시계"></canvas>
+            </div>
+            <div class="ceo-desk"><canvas class="boss" id="boss" width="24" height="32" aria-hidden="true"></canvas><i class="dtop"></i><span class="tag ceo-tag">대표</span></div>
+            <div class="ceo-line" id="ceo-line"></div>
+            <p class="ceo-empty" id="ceo-empty">대표님께 온 요청이 없어요</p>
+          </div>
+        </section>
+      </div>
+      </div>
+      <p class="legend" id="legend">
         <span><i class="obs observed"></i>관측</span><span><i class="obs inferred"></i>추정</span><span><i class="obs stale"></i>오래됨(5분+)</span>
-        <span class="sw" style="--c:var(--fable)">fable·왕관</span><span class="sw" style="--c:var(--opus)">opus·캡</span>
-        <span class="sw" style="--c:var(--sonnet)">sonnet·헤드폰</span><span class="sw" style="--c:var(--haiku)">haiku·털모자</span>
-        <span><i class="pips" style="--m:var(--ink)"><i class="on"></i><i class="on"></i><i></i><i></i></i>이름표 막대 = effort</span><span>숨쉬기·커피=장식</span>
+        <span class="sw" style="--c:var(--fable)">fable·실장</span><span class="sw" style="--c:var(--opus)">opus·책임</span>
+        <span class="sw" style="--c:var(--sonnet)">sonnet·주임</span><span class="sw" style="--c:var(--haiku)">haiku·인턴</span>
+        <span>메인 세션은 늘 실장 · 띠 색 = 실제 모델 · 명패 막대 = effort</span>
       </p>
     </section>
 
     <aside class="panel">
-      <section class="card meter" id="meter" aria-label="모델 분배 준수 계기판"></section>
-      <section class="card"><h2>지금</h2><div id="now" class="now"></div></section>
-      <section class="card"><h2>위임 로그</h2><div id="deleg" class="deleg"></div></section>
-      <section class="card"><h2>오늘 통계</h2><div id="stats" class="stats"></div></section>
+      <section class="card limits" id="limits" aria-label="플랜 한도">
+        <header class="chest-h"><i class="ico" style="--i:var(--ico-clock)"></i><h2>플랜 한도</h2><span class="sub" id="lim-sub">계정 전체</span>
+          <span class="chip stale-chip" id="lim-stale" hidden title="마지막 캡처가 15분 넘었어요">오래됨</span></header>
+        <div id="lim-body"></div>
+        <h3 class="ctx-h">세션 컨텍스트 <small>오늘</small></h3><div id="ctx-body"></div>
+      </section>
+      <section class="card" id="usage" aria-label="사용량">
+        <header class="chest-h"><i class="ico" style="--i:var(--ico-chest)"></i><h2>① 사용량</h2><span class="sub" id="usage-sub">오늘 · 출력 토큰</span>
+          <button type="button" class="chipbtn" id="usage-more">자세히</button></header>
+        <div id="usage-body"></div>
+      </section>
+      <section class="card meter" id="meter" aria-label="모델 분배 준수"></section>
+      <section class="card"><header class="chest-h"><i class="ico" style="--i:var(--ico-person)"></i><h2>③ 지금</h2></header><div id="now" class="now"></div></section>
+      <section class="card"><header class="chest-h"><i class="ico" style="--i:var(--ico-scroll)"></i><h2>④ 위임 로그</h2></header><div id="deleg" class="deleg"></div></section>
     </aside>
   </main>
 
+  <div class="modal" id="umodal" hidden>
+    <div class="modal-card px" role="dialog" aria-modal="true" aria-labelledby="um-t">
+      <header class="chest-h"><i class="ico" style="--i:var(--ico-chart)"></i><h2 id="um-t">사용량 자세히</h2><button type="button" class="ib x" id="um-x" title="닫기">✕</button></header>
+      <div class="um-body" id="um-body"></div>
+    </div>
+  </div>
+  <div class="card-pop px" id="pop" hidden role="dialog" aria-label="캐릭터 정보"></div>
+  <div class="tip" id="tip" hidden role="tooltip"></div>
+  <div class="toast" id="toast" hidden role="status"></div>
   <footer class="ticker"><span class="ticker-label">이벤트</span><ol id="ticker"></ol></footer>
   <script type="module" src="app.js"></script>
 </body>

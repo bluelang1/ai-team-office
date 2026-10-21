@@ -2,8 +2,11 @@
 # AI Team Office background runner: ./start.sh start|stop|restart|status [server flags...]
 set -u
 DIR="$(cd "$(dirname "$0")" && pwd)"
-RUN="$DIR/.run"; PID="$RUN/server.pid"; LOG="$RUN/server.log"
-mkdir -p "$RUN"
+# Runtime files live outside the code folder (a plugin update replaces it): ~/.claude/ai-team-office/run/
+RUN="$HOME/.claude/ai-team-office/run"; PID="$RUN/server.pid"; LOG="$RUN/server.log"
+mkdir -p "$RUN" && chmod 700 "$HOME/.claude/ai-team-office" "$RUN" 2>/dev/null
+# A server started by an older start.sh kept its pid in office/.run/: adopt it so stop/status still find it.
+[ ! -f "$PID" ] && [ -f "$DIR/.run/server.pid" ] && mv "$DIR/.run/server.pid" "$PID" 2>/dev/null
 cmd="${1:-start}"; [ $# -gt 0 ] && shift
 
 pid_of() { [ -f "$PID" ] && tr -cd '0-9' <"$PID"; }

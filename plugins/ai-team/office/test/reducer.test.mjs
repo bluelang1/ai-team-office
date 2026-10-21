@@ -1,3 +1,4 @@
+import './home.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -16,13 +17,13 @@ const until = sec => tick(events.filter(e => Date.parse(e.ts) <= at(sec)).reduce
 
 // Real lines from ~/.claude/logs (shape reference from the brief).
 const REAL = [
-  { ts: '2026-10-21T04:37:58.000Z', ev: 'PostToolUse', sid: '4ae19b3b-c108-44de-9394-99577b39a032', proj: 'AI_Team', cwd: '~/Documents/AI_Team', tool: 'Bash', effort: 'high', mode: 'bypassPermissions', dur: 101, target: 'mkdir -p ~/Documents/AI_Team/office' },
-  { ts: '2026-10-21T04:37:59.000Z', ev: 'PostToolUse', sid: '4ae19b3b-c108-44de-9394-99577b39a032', proj: 'AI_Team', aid: 'ae38e93fb3aa8ec5e', atype: 'general-purpose', tool: 'WebFetch', effort: 'medium', mode: 'bypassPermissions', dur: 4021, target: 'https://github.com/x/y' },
-  { ts: '2026-10-21T04:38:00.000Z', ev: 'PreToolUse', sid: '4ae19b3b-c108-44de-9394-99577b39a032', proj: 'AI_Team', tool: 'Agent', effort: 'high', sub: { type: 'lookup', model: 'haiku', effort: 'low', desc: '훅 페이로드 프로브용 조회', prompt: '다음을 순서대로...' } },
-  { ts: '2026-10-21T04:38:00.000Z', ev: 'PostToolUse', sid: '4ae19b3b-c108-44de-9394-99577b39a032', proj: 'AI_Team', tool: 'Agent', dur: 6, sub: { type: 'lookup', model: 'haiku', effort: 'low', desc: '훅 페이로드 프로브용 조회' }, child: 'a0b024e14b34b9fca', resolved: 'claude-haiku-5-5' },
-  { ts: '2026-10-21T04:38:01.000Z', ev: 'SubagentStart', sid: '4ae19b3b-c108-44de-9394-99577b39a032', proj: 'AI_Team', aid: 'a0b024e14b34b9fca', atype: 'lookup' },
-  { ts: '2026-10-21T04:38:03.000Z', ev: 'SubagentStop', sid: '4ae19b3b-c108-44de-9394-99577b39a032', proj: 'AI_Team', aid: 'a0b024e14b34b9fca', atype: 'lookup', effort: 'low', msg: '1) lookup.md 읽음: ...' },
-  { ts: '2026-10-21T04:38:04Z', event: 'verdict', session_id: '4ae19b3b-c108-44de-9394-99577b39a032', ref: 'a0b024e14b34b9fca', verdict: 'ok', note: '훅 검증' },
+  { ts: '2026-10-21T04:37:58.000Z', ev: 'PostToolUse', sid: '5b0c7e2a-1d3f-4e6a-9b8c-0d1e2f3a4b5c', proj: 'AI_Team', cwd: '/Users/x/Documents/AI_Team', tool: 'Bash', effort: 'high', mode: 'bypassPermissions', dur: 101, target: 'mkdir -p /Users/x/Documents/AI_Team/office' },
+  { ts: '2026-10-21T04:37:59.000Z', ev: 'PostToolUse', sid: '5b0c7e2a-1d3f-4e6a-9b8c-0d1e2f3a4b5c', proj: 'AI_Team', aid: 'ae38e93fb3aa8ec5e', atype: 'general-purpose', tool: 'WebFetch', effort: 'medium', mode: 'bypassPermissions', dur: 4021, target: 'https://github.com/x/y' },
+  { ts: '2026-10-21T04:38:00.000Z', ev: 'PreToolUse', sid: '5b0c7e2a-1d3f-4e6a-9b8c-0d1e2f3a4b5c', proj: 'AI_Team', tool: 'Agent', effort: 'high', sub: { type: 'lookup', model: 'haiku', effort: 'low', desc: '훅 페이로드 프로브용 조회', prompt: '다음을 순서대로...' } },
+  { ts: '2026-10-21T04:38:00.000Z', ev: 'PostToolUse', sid: '5b0c7e2a-1d3f-4e6a-9b8c-0d1e2f3a4b5c', proj: 'AI_Team', tool: 'Agent', dur: 6, sub: { type: 'lookup', model: 'haiku', effort: 'low', desc: '훅 페이로드 프로브용 조회' }, child: 'a0b024e14b34b9fca', resolved: 'claude-haiku-5-5' },
+  { ts: '2026-10-21T04:38:01.000Z', ev: 'SubagentStart', sid: '5b0c7e2a-1d3f-4e6a-9b8c-0d1e2f3a4b5c', proj: 'AI_Team', aid: 'a0b024e14b34b9fca', atype: 'lookup' },
+  { ts: '2026-10-21T04:38:03.000Z', ev: 'SubagentStop', sid: '5b0c7e2a-1d3f-4e6a-9b8c-0d1e2f3a4b5c', proj: 'AI_Team', aid: 'a0b024e14b34b9fca', atype: 'lookup', effort: 'low', msg: '1) lookup.md 읽음: ...' },
+  { ts: '2026-10-21T04:38:04Z', event: 'verdict', session_id: '5b0c7e2a-1d3f-4e6a-9b8c-0d1e2f3a4b5c', ref: 'a0b024e14b34b9fca', verdict: 'ok', note: '훅 검증' },
 ];
 
 test('classify: tool and bash sub-classification', () => {
@@ -175,13 +176,13 @@ test('compliance: unspecified model resolving to fable is ✗, pending until Pos
 test('real sample lines: lazy subagent, model from Post, verdict stamp, main has no aid', () => {
   let s = initState();
   for (const e of REAL.slice(0, 5)) s = reduce(s, e);
-  const r = s.floors.AI_Team.rooms['4ae19b3b-c108-44de-9394-99577b39a032'];
+  const r = s.floors.AI_Team.rooms['5b0c7e2a-1d3f-4e6a-9b8c-0d1e2f3a4b5c'];
   assert.ok(r.chars.main && r.chars.main.aid === null);
   assert.equal(r.chars.ae38e93fb3aa8ec5e.atype, 'general-purpose', 'created lazily from a PostToolUse');
   assert.equal(r.chars.a0b024e14b34b9fca.model, 'haiku');
   s = reduce(s, REAL[5]);
   s = reduce(s, REAL[6]);
-  const k = s.floors.AI_Team.rooms['4ae19b3b-c108-44de-9394-99577b39a032'].chars.a0b024e14b34b9fca;
+  const k = s.floors.AI_Team.rooms['5b0c7e2a-1d3f-4e6a-9b8c-0d1e2f3a4b5c'].chars.a0b024e14b34b9fca;
   assert.equal(k.act, 'leaving'); assert.equal(k.verdict, 'ok');
   assert.equal(compliance(s).rows[0].match, 'yes');
 });

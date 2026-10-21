@@ -1,0 +1,7 @@
+{
+  "_comment": "Copy to office/pricing.json and fill in YOUR prices in USD per 1M tokens (in = input, out = output, cacheR = cache read, cacheW = cache write). The zeros below are placeholders, not real prices. A family row is used only when all four numbers are present; families without a row get no usd.",
+  "fable": { "in": 0, "out": 0, "cacheR": 0, "cacheW": 0 },
+  "opus": { "in": 0, "out": 0, "cacheR": 0, "cacheW": 0 },
+  "sonnet": { "in": 0, "out": 0, "cacheR": 0, "cacheW": 0 },
+  "haiku": { "in": 0, "out": 0, "cacheR": 0, "cacheW": 0 }
+}

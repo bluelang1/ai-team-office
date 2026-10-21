@@ -49,13 +49,13 @@ const GIT_READ = new Set(['log', 'diff', 'status', 'show', 'blame', 'grep', 'bra
 
 /** Model family from 'haiku' | 'claude-haiku-5-5' | anything. */
 export function family(s) {
-  const m = /fable|opus|sonnet|haiku/.exec(String(s || '').toLowerCase());
+  const m = typeof s === 'string' ? /fable|opus|sonnet|haiku/.exec(s.toLowerCase()) : null;
   return m ? m[0] : null;
 }
 
 /** Tokens of the first meaningful shell segment (skips `cd x &&`, env assignments, sudo/time). */
 export function bashTokens(cmd) {
-  const segs = String(cmd || '').split(/&&|\|\||;|\|/).map(x => x.trim()).filter(Boolean);
+  const segs = (typeof cmd === 'string' ? cmd : '').split(/&&|\|\||;|\|/).map(x => x.trim()).filter(Boolean);
   for (const seg of segs) {
     const toks = seg.split(/\s+/).filter(Boolean);
     while (toks.length && (/^\w+=/.test(toks[0]) || ['sudo', 'time', 'env', 'command'].includes(toks[0]))) toks.shift();
