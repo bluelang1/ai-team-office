@@ -145,7 +145,7 @@ Claude Code 가 사람에게 묻는 두 가지 — 권한 확인(`PermissionRequ
 
 ### 설치 (사용자가 직접, `~/.claude/settings.json`)
 
-`<office>` 는 이 폴더의 절대 경로. 훅 `timeout`(초) 은 **대기 시간/1000 + 5 이상**이어야 한다 — 스크립트의 curl `--max-time` 이 그 값이라 더 짧으면 Claude Code 가 훅을 먼저 죽이고, 그 뒤 대표실 답은 410 으로 거절된다. 기본 `OFFICE_RELAY_WAIT_MS=170000` → max-time 175 → `timeout` ≥ 175(아래 예시 180), 최대 540000 → ≥ 545, 질문용 60000 → ≥ 65. `OFFICE_RELAY_WAIT_MS` 는 1~7자리 10진수만 받는다(`060000` = 60000, 앞 0 은 8진수가 아님; 그 외·더 긴 값은 기본값). 기존 `PermissionRequest`/`PreToolUse` 배열이 있으면 항목을 **추가**한다.
+`<office>` 는 이 폴더의 절대 경로. 플러그인으로 설치했다면 버전이 들어간 캐시 폴더(`~/.claude/plugins/cache/…/<version>/`) 대신 마켓플레이스 체크아웃 `~/.claude/plugins/marketplaces/ai-team-office/plugins/ai-team/office` 를 쓴다 — `claude plugin marketplace update` 가 그 자리에서 갱신하므로 업데이트 뒤에도 새 훅이 돈다(`/ai-team:ai-team-setup` 이 이렇게 써 준다). 훅 `timeout`(초) 은 **대기 시간/1000 + 5 이상**이어야 한다 — 스크립트의 curl `--max-time` 이 그 값이라 더 짧으면 Claude Code 가 훅을 먼저 죽이고, 그 뒤 대표실 답은 410 으로 거절된다. 기본 `OFFICE_RELAY_WAIT_MS=170000` → max-time 175 → `timeout` ≥ 175(아래 예시 180), 최대 540000 → ≥ 545, 질문용 60000 → ≥ 65. `OFFICE_RELAY_WAIT_MS` 는 1~7자리 10진수만 받는다(`060000` = 60000, 앞 0 은 8진수가 아님; 그 외·더 긴 값은 기본값). 기존 `PermissionRequest`/`PreToolUse` 배열이 있으면 항목을 **추가**한다.
 
 ```json
 {

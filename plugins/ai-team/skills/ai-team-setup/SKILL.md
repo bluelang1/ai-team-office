@@ -22,15 +22,26 @@ Steps:
 
 ## Optional extras (offer after step 5)
 
-After the rules block is handled (installed, already up to date, or declined), offer the two optional steps below. Show each one and apply it only on an explicit "yes" for that step. Skip silently on no. Both edit `~/.claude/settings.json`: back it up first (`cp ~/.claude/settings.json ~/.claude/settings.json.bak-ai-team`), then **merge** with a minimal edit (e.g. `jq`): add entries to existing arrays, never replace an array or touch unrelated keys. If the file does not exist, create it. Re-read and validate the JSON afterwards.
+After the rules block is handled (installed, already up to date, or declined), offer the two optional steps below. Show each one and apply it only on an explicit "yes" for that step. Skip silently on no. Both edit `~/.claude/settings.json`: back it up first (once per setup run, before its first settings change: `cp ~/.claude/settings.json ~/.claude/settings.json.bak-ai-team-$(date +%Y%m%d%H%M%S)`; later steps in the same run reuse that backup), then **merge** with a minimal edit (e.g. `jq`): add entries to existing arrays, never replace an array or touch unrelated keys. If the file does not exist, create it. Re-read and validate the JSON afterwards.
 
-**Resolve `${CLAUDE_PLUGIN_ROOT}` first.** Settings files do not expand `${CLAUDE_PLUGIN_ROOT}`, so before writing any command into `~/.claude/settings.json`, resolve it to the absolute plugin path (the directory containing this skill's `skills/`, `bin/` and `office/` folders) and write that absolute path. Note that a plugin update changes the install path, so re-run this setup after updating the plugin.
+**Pick a stable path `<ABS>` first.** Settings files do not expand `${CLAUDE_PLUGIN_ROOT}`, so every command written into `~/.claude/settings.json` needs an absolute path. `${CLAUDE_PLUGIN_ROOT}` itself resolves to a versioned cache folder (`~/.claude/plugins/cache/ai-team-office/ai-team/<version>/`), which an update replaces with a new folder, so hooks written with it would silently keep running the old version. Choose `<ABS>` in this order:
+
+1. **Stable (preferred):** the marketplace checkout `$HOME/.claude/plugins/marketplaces/ai-team-office/plugins/ai-team`, if it exists and contains `office/hooks/ceo-relay.sh` and `bin/statusline-tee`. `claude plugin marketplace update ai-team-office` updates this folder in place, so the path never changes and the hooks follow updates.
+2. **Fallback:** the resolved `${CLAUDE_PLUGIN_ROOT}` (the directory containing this skill's `skills/`, `bin/` and `office/` folders). Tell the user: "This path includes the plugin version; re-run `/ai-team:ai-team-setup` after updating the plugin."
+
+Write `<ABS>` into settings as the expanded absolute path (as before), and tell the user which of the two was used.
+
+**Existing entries on a versioned path (offer, then rewrite).** Before (a) and (b), look for commands in `~/.claude/settings.json` that contain `ceo-relay.sh` (in `hooks.PermissionRequest` / `hooks.PreToolUse`) or `statusline-tee` (in `statusLine.command`) and whose path contains `/plugins/cache/`. If any are found and `<ABS>` is the stable path:
+- Show each old command and the new one (only the path part changes: inside the quoted path token, replace only the part from its start through `/plugins/cache/ai-team-office/ai-team/<version>` with `<ABS>`, e.g. `"<old>/office/hooks/ceo-relay.sh"` → `"<ABS>/office/hooks/ceo-relay.sh"`; keep env prefixes such as `OFFICE_RELAY_QUESTION_WAIT_MS=60000`, quoting, `timeout` and `matcher` unchanged).
+- Ask "Rewrite these to the stable path so they follow plugin updates? (yes/no)". On yes: back up first (once per setup run, before its first settings change: `cp ~/.claude/settings.json ~/.claude/settings.json.bak-ai-team-$(date +%Y%m%d%H%M%S)`; later steps in the same run reuse that backup), change only those `command` strings in place (no new entries, no reordering, nothing else touched), then re-read and validate the JSON. Do **not** touch `~/.claude/logs/statusline/.previous-command` when rewriting `statusline-tee`.
+- Idempotent: commands already under `<ABS>` are left alone, and an entry rewritten here counts as installed for (a) / (b).
+- If `<ABS>` is the fallback (no marketplace checkout), do not rewrite; just say the entries point at a versioned folder and must be re-run after each update.
 
 ### (a) "대표실 relay" (CEO-room relay)
 
 Explain: lets you answer permission requests and `AskUserQuestion` questions from the dashboard (with a hand-back button). It steps aside instantly when no dashboard tab is open, answers only from the dashboard (never on its own), and `OFFICE_RELAY_DISABLE=1` turns it off. Needs `curl` and a running dashboard (`/ai-team:office start`).
 
-Show and, on yes, merge these two hook entries (idempotent: skip any entry whose command already contains `ceo-relay.sh`), with `<ABS>` the resolved plugin path:
+Show and, on yes, merge these two hook entries (idempotent: skip any entry whose command already contains `ceo-relay.sh`, whatever its path; a versioned path is handled by the rewrite above), with `<ABS>` the path chosen above:
 
 - `hooks.PermissionRequest` += `{"matcher":"*","hooks":[{"type":"command","command":"OFFICE_RELAY_QUESTION_WAIT_MS=60000 \"<ABS>/office/hooks/ceo-relay.sh\"","timeout":180}]}`
 - `hooks.PreToolUse` += `{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"OFFICE_RELAY_QUESTION_WAIT_MS=60000 \"<ABS>/office/hooks/ceo-relay.sh\"","timeout":180}]}`
@@ -40,7 +51,7 @@ Show and, on yes, merge these two hook entries (idempotent: skip any entry whose
 Explain: the dashboard shows 5-hour and 7-day plan limits and per-session context, which Claude Code only exposes through the statusline JSON. A small wrapper saves that JSON locally and then runs your previous statusline unchanged.
 
 On yes:
-1. Read `statusLine` from `~/.claude/settings.json`. If it already points at `<ABS>/bin/statusline-tee`, say "already installed" and stop.
+1. Read `statusLine` from `~/.claude/settings.json`. If its command already contains `statusline-tee` (any path), say "already installed" and stop (a versioned path is handled by the rewrite above; never wrap `statusline-tee` in itself).
 2. Save the previous command: write `statusLine.command` (empty file if there was none) to `~/.claude/logs/statusline/.previous-command` (create the directory). If a previous `statusLine` exists with other fields (e.g. `padding`), keep them.
 3. Make sure `<ABS>/bin/statusline-tee` is executable (`chmod +x`) and set `statusLine` to `{"type":"command","command":"<ABS>/bin/statusline-tee"}` (keeping other existing fields).
 4. Tell the user the wrapper prints exactly what the previous command printed, and prints nothing if there was none.
@@ -49,5 +60,5 @@ On yes:
 
 Offer this when the user asks to remove the extras. Back up `~/.claude/settings.json` first, then:
 
-- **Relay**: remove only the entries whose command contains `ceo-relay.sh` from `hooks.PermissionRequest` and `hooks.PreToolUse` (delete an array only if it becomes empty). Alternatively set `OFFICE_RELAY_DISABLE=1` to disable it without editing settings.
-- **Plan limits**: read `~/.claude/logs/statusline/.previous-command`; if non-empty, set `statusLine.command` back to it; if empty, remove the `statusLine` key. Then delete `.previous-command`. Captured JSON files in `~/.claude/logs/statusline/` can be deleted too.
+- **Relay**: remove only the entries whose command contains `ceo-relay.sh` (whatever its path: stable, versioned cache or a local checkout) from `hooks.PermissionRequest` and `hooks.PreToolUse` (delete an array only if it becomes empty). Alternatively set `OFFICE_RELAY_DISABLE=1` to disable it without editing settings.
+- **Plan limits** (only if `statusLine.command` contains `statusline-tee`, whatever its path): read `~/.claude/logs/statusline/.previous-command`; if non-empty, set `statusLine.command` back to it; if empty, remove the `statusLine` key. Then delete `.previous-command`. Captured JSON files in `~/.claude/logs/statusline/` can be deleted too.

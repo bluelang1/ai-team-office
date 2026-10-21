@@ -10,16 +10,22 @@ mkdir -p "$RUN" && chmod 700 "$HOME/.claude/ai-team-office" "$RUN" 2>/dev/null
 cmd="${1:-start}"; [ $# -gt 0 ] && shift
 
 pid_of() { [ -f "$PID" ] && tr -cd '0-9' <"$PID"; }
-# Running = the pid file names a live process that really is this server (guards against pid reuse).
+cmd_of() { ps -p "$1" -o command= 2>/dev/null; }
+# Running = the pid file names a live process that really is an office server (guards against pid reuse).
+# Any office/server.mjs counts, not only this folder's: after a plugin update the old version's server
+# (another versioned folder) must still be found so `restart` can stop it and start this version.
 running() {
   local p; p="$(pid_of)" || return 1; [ -n "$p" ] || return 1
-  kill -0 "$p" 2>/dev/null && ps -p "$p" -o command= 2>/dev/null | grep -qF "$DIR/server.mjs"
+  kill -0 "$p" 2>/dev/null && cmd_of "$p" | grep -qE '^[^ ]*node[^ ]* ([^ ]+ )*[^ ]*/office/server\.mjs( |$)'   # node, not an editor
 }
+# Running, but from another folder (an older or newer plugin version).
+other_version() { running && ! cmd_of "$(pid_of)" | grep -qF "$DIR/server.mjs"; }
+OTHER_HINT="다른 버전 폴더에서 실행 중이에요. 이 버전으로 바꾸려면: $0 restart"
 port_of() { local p=4747 prev=""; for a in "$@"; do [ "$prev" = "--port" ] && p="$a"; prev="$a"; done; echo "$p"; }
 
 case "$cmd" in
   start)
-    if running; then echo "이미 실행 중 (pid $(pid_of))"; exit 0; fi
+    if running; then echo "이미 실행 중 (pid $(pid_of))"; other_version && echo "$OTHER_HINT"; exit 0; fi
     nohup node "$DIR/server.mjs" "$@" >>"$LOG" 2>&1 &
     echo $! >"$PID"
     sleep 0.6
@@ -37,6 +43,6 @@ case "$cmd" in
     rm -f "$PID" ;;
   restart) "$0" stop || exit 1; exec "$0" start "$@" ;;
   status)
-    if running; then echo "실행 중 pid $(pid_of)"; tail -n 3 "$LOG"; else echo "중지됨"; exit 1; fi ;;
+    if running; then echo "실행 중 pid $(pid_of)"; other_version && echo "$OTHER_HINT"; tail -n 3 "$LOG"; else echo "중지됨"; exit 1; fi ;;
   *) echo "usage: $0 start|stop|restart|status [--port N] [--redact] [--replay file --speed N]"; exit 2 ;;
 esac

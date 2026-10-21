@@ -50,3 +50,9 @@
 - Inline scripts that write files (`python3 - <<EOF … open(p,'w')`, `node -e … writeFileSync`) count as coding (개발실)
 - CEO room: side-view drawer pedestal facing the 대표; newcomers knock ("똑똑") at the door before queuing (not on reload, skipped under reduced motion)
 - Hover card stays open while the pointer is on the card (300ms grace); pressing or focusing inside pins it, so 승인/거부 is one click
+
+## 0.2.8 — 2026-10-22
+- README (EN/KO): Update and Troubleshooting sections; keep the dashboard tab open
+- `/ai-team:office restart`; `start.sh` stops a dashboard started by another plugin version (node process only), so restart after an update runs the new version
+- Setup writes hooks via the version-independent marketplace path and offers to move existing versioned-cache hooks there (timestamped backup)
+- New screenshots (sim data)

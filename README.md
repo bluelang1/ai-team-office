@@ -47,6 +47,25 @@ Then, inside Claude Code:
 
 1. `/ai-team:ai-team-setup` - shows the operating rules and, only if you say yes, appends them to `~/.claude/CLAUDE.md`.
 2. `/ai-team:office` - starts the dashboard and opens http://127.0.0.1:4747.
+3. Optional: run `/ai-team:ai-team-setup` again and say yes to the CEO-room relay to answer approvals from the dashboard. **Keep the dashboard tab open**: the relay only waits while a tab is open (a background tab is fine for permission prompts; questions need the tab visible).
+
+## Update
+
+```bash
+claude plugin marketplace update ai-team-office && claude plugin update ai-team@ai-team-office
+```
+
+Then **start a new Claude Code session** (a session opened before the update still points at the old plugin folder) and run `/ai-team:office restart`, or run `~/.claude/plugins/marketplaces/ai-team-office/plugins/ai-team/office/start.sh restart` from any shell. It stops the running dashboard (even one started by the previous version) and starts the new one. Open tabs reload themselves, and the header shows `(vX.Y.Z)` so you can see which version is running. Sessions started before the update keep their old hooks until you restart them.
+
+If you installed the relay or statusline wrapper with an older setup, run `/ai-team:ai-team-setup` once more: it offers to move them to a version-independent path so they follow future updates.
+
+## Troubleshooting
+
+- **No approve/deny buttons in the CEO room (대표실).** The relay is opt-in: install it with `/ai-team:ai-team-setup`. A dashboard tab at http://127.0.0.1:4747 must be open (background is fine for permission prompts; questions need it visible). Check `curl -s http://127.0.0.1:4747/healthz` (`viewers`, `hiddenViewers`, `pending`), and `~/.claude/ai-team-office/run/server.log` for `not relayed: <reason>`.
+- **Header shows an old version.** The old server is still running: `/ai-team:office restart`.
+- **Dashboard does not start.** Check `node --version` (needs >= 20) and `/ai-team:office status`; the log is `~/.claude/ai-team-office/run/server.log`.
+- **Report text is cut short.** That session started before an update and still runs the old hook: restart the session.
+- **Turn the relay off.** Remove it with the Undo step of `/ai-team:ai-team-setup`, or `export OFFICE_RELAY_DISABLE=1` in your shell before starting `claude` (applies to sessions started afterwards). The terminal prompts then work as before.
 
 ## Routing table
 
@@ -133,6 +152,25 @@ Claude Code 안에서:
 
 1. `/ai-team:ai-team-setup` - 운영 규칙을 보여주고, 동의(yes)할 때만 `~/.claude/CLAUDE.md` 에 추가합니다.
 2. `/ai-team:office` - 대시보드를 켜고 http://127.0.0.1:4747 을 엽니다.
+3. 선택: `/ai-team:ai-team-setup` 을 한 번 더 실행해 대표실 relay 에 yes 하면 대시보드에서 승인할 수 있어요. **대시보드 탭은 열어 두세요**: 탭이 열려 있을 때만 relay 가 기다립니다(권한 요청은 백그라운드 탭이어도 되고, 질문은 탭이 보여야 해요).
+
+### 업데이트
+
+```bash
+claude plugin marketplace update ai-team-office && claude plugin update ai-team@ai-team-office
+```
+
+그다음 **새 Claude Code 세션을 열어**(업데이트 전에 연 세션은 예전 플러그인 폴더를 가리켜요) `/ai-team:office restart` 를 실행하거나, 아무 셸에서 `~/.claude/plugins/marketplaces/ai-team-office/plugins/ai-team/office/start.sh restart` 를 실행하세요. 실행 중인 대시보드를(이전 버전이 띄운 것이어도) 끄고 새 버전으로 켭니다. 열린 탭은 스스로 새로고침되고, 헤더의 `(vX.Y.Z)` 로 지금 돌고 있는 버전을 확인할 수 있어요. 업데이트 전에 시작한 세션은 재시작할 때까지 예전 훅을 씁니다.
+
+예전 setup 으로 relay·상태줄 래퍼를 설치했다면 `/ai-team:ai-team-setup` 을 한 번 더 실행하세요. 버전과 무관한 경로로 옮길지 물어보고, 그 뒤로는 업데이트를 자동으로 따라갑니다.
+
+### 문제 해결
+
+- **대표실에 승인/거부 버튼이 안 보여요.** relay 는 선택 설치예요: `/ai-team:ai-team-setup` 으로 설치하세요. http://127.0.0.1:4747 대시보드 탭이 열려 있어야 해요(권한 요청은 백그라운드여도 되고, 질문은 보여야 해요). `curl -s http://127.0.0.1:4747/healthz` 로 `viewers`·`hiddenViewers`·`pending` 을 보고, `~/.claude/ai-team-office/run/server.log` 에서 `not relayed: <이유>` 를 찾아보세요.
+- **헤더 버전이 예전 그대로예요.** 예전 서버가 아직 돌고 있어요: `/ai-team:office restart`.
+- **대시보드가 안 켜져요.** `node --version`(20 이상 필요)과 `/ai-team:office status` 를 확인하세요. 로그는 `~/.claude/ai-team-office/run/server.log`.
+- **보고 내용이 중간에 잘려요.** 업데이트 전에 시작한 세션이라 예전 훅이 돌고 있어요: 세션을 재시작하세요.
+- **relay 끄기.** `/ai-team:ai-team-setup` 의 Undo 로 지우거나, `claude` 를 시작하기 전에 셸에서 `export OFFICE_RELAY_DISABLE=1` 하세요(그 뒤에 시작한 세션부터 적용). 터미널 프롬프트는 원래대로 동작해요.
 
 ### 분배표
 
@@ -152,7 +190,7 @@ Claude Code 안에서:
 
 - 로컬 전용: `127.0.0.1` 에만 바인딩하며 외부로 아무것도 보내지 않습니다.
 - 모든 요청에 Host/Origin 검사(DNS rebinding·교차 사이트 차단), POST 는 `application/json` 필수.
-- 뷰어 규칙: 대시보드 탭이 실제로 열려 있을 때만 대시보드 답이 유효하고, 아니면 relay 는 즉시 비켜 터미널 프롬프트가 그대로 동작합니다.
+- 뷰어 규칙: 대시보드 탭이 실제로 열려 있을 때만 relay 가 요청을 붙잡습니다(권한 요청은 백그라운드 탭도 됨 — 터미널 프롬프트가 함께 떠 있으므로; 질문은 훅이 끝날 때까지 터미널을 막으므로 보이는 탭만). 아니면 즉시 비켜 터미널 프롬프트가 그대로 동작합니다.
 - 토큰 소모 없음: `~/.claude/logs/` 의 로컬 로그만 읽습니다.
 - `--redact` 로 프롬프트·경로·명령 인자를 가릴 수 있습니다.
 
