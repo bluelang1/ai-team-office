@@ -142,10 +142,41 @@ export const CEO_PLAN = {
   boss: { r: 13, y: 91, face: 'left', back: 10, knee: 20, hands: [22, 24] },   // sprite centre; his back on the backrest, knee, hands
   desk: { r0: 21, r1: 48, top: 21 },                  // side-view desk from just in front of his knees to the door side
   spot0: 60, step: 21, y: 91, min: 8,                // queue: first spot just left of the desk, then further left (label below)
+  door: 124,                                          // the glass door (world.js ROOMS.ceo.door.x): newcomers knock here first
 };
 /** Queue spots for n people: [{ r (centre, from the right wall), y (feet), face: 'right' }], front first.
  *  Only as many as fit between the door side and the desk (room width w); the rest are counted as +N. */
 export function ceoSpots(n, w = 134) {
   const P = CEO_PLAN, fit = Math.max(1, Math.floor((w - P.min - 12 - P.spot0) / P.step) + 1);
   return Array.from({ length: Math.min(n, fit, 4) }, (_, i) => ({ r: P.spot0 + i * P.step, y: P.y, face: 'right' }));
+}
+
+// ---------- 대표실 arrival: knock at the door, then walk to the spot ----------
+/** Knock timing (ms; style.css .qf.knock/.qf.entering use the same numbers): the enter animation runs, "똑똑" shows
+ *  from 40% of `ms` to its end, then the figure walks from the door to its spot in `walk`. */
+export const CEO_KNOCK = { ms: 1350, bubbleAt: 540, walk: 900 };
+/** How a new figure joins the 대표실 line. known = keys queued at the previous live render, or null before the first
+ *  live render (reload / history replay: whoever is already waiting appears in place, no animation, no knock).
+ *  A key that was already queued (e.g. waiting as +N) slides in without knocking; only a real newcomer knocks.
+ *  Reduced motion: no animation and no knock (no bubble either). -> { anim: 'arrive'|'warp'|null, knock } */
+export function ceoEntry(key, { known, sameFloor, reduced }) {
+  if (!known || reduced) return { anim: null, knock: false };
+  return { anim: sameFloor ? 'arrive' : 'warp', knock: !known.has(key) };
+}
+
+// ---------- hover card hold ----------
+/** Keeps a hover-opened card open while the pointer is on its anchor (the character) or on the card itself.
+ *  Leaving either starts a grace of `ms`; the card closes only if, when it runs out, the pointer is on neither.
+ *  close() decides about pinned cards itself. Timers are injectable for tests. */
+export class HoverHold {
+  constructor(close, ms = 300, timers = { set: (f, t) => setTimeout(f, t), clear: id => clearTimeout(id) }) {
+    this.close = close; this.ms = ms; this.t = timers; this.on = { anchor: false, card: false }; this.id = null;
+  }
+  enter(part) { this.on[part] = true; this.cancel(); }
+  leave(part) {
+    this.on[part] = false; this.cancel();
+    this.id = this.t.set(() => { this.id = null; if (!this.on.anchor && !this.on.card) this.close(); }, this.ms);
+  }
+  cancel() { if (this.id != null) this.t.clear(this.id); this.id = null; }
+  reset() { this.cancel(); this.on.anchor = this.on.card = false; }
 }

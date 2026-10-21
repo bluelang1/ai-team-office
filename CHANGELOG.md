@@ -44,3 +44,9 @@
 
 ## 0.2.6 — 2026-10-21
 - CEO room: a dashboard answer is now part of the event history (`RelayDecided`, from `ceo-decisions.jsonl`), so after a reload or restart an approved, still-running command no longer comes back as a "답이 필요해요" card without buttons; a late permission_prompt does not reopen it
+
+## 0.2.7 — 2026-10-22
+- Plugin agents (`ai-team:reviewer`, `ai-team:implementer` …) get their real job (심사/개발/조사) instead of 사원; reviewers work in the QA room
+- Inline scripts that write files (`python3 - <<EOF … open(p,'w')`, `node -e … writeFileSync`) count as coding (개발실)
+- CEO room: side-view drawer pedestal facing the 대표; newcomers knock ("똑똑") at the door before queuing (not on reload, skipped under reduced motion)
+- Hover card stays open while the pointer is on the card (300ms grace); pressing or focusing inside pins it, so 승인/거부 is one click

@@ -8,3 +8,4 @@ import './relay.test.mjs';
 import './v3.test.mjs';
 import './ceo-room.test.mjs';
 import './limits.test.mjs';
+import './ceo-knock.test.mjs';

@@ -8,7 +8,7 @@
 //   UserPromptSubmit (main)               -> thinking     desk        prompt   inferred
 //   PreToolUse tool                       -> by classify  classify()  tool     observed
 //        library=reading  server=running  bench=writing  external=external  meeting=delegating
-//        atype=code-reviewer overrides the room with review (reviewing)
+//        a reviewer subagent (job 심사: code-reviewer, reviewer, plugin:reviewer …) overrides the room with review
 //   PostToolUse / PostToolUseFailure      -> (stays)      (stays)     between  observed
 //        Failure also sets failedAt -> `flash` (lightning) for FAIL_MS and failCount++
 //   main Agent Pre/Post/Failure           -> s.deleg row: pending -> done | failed; expired after PENDING_MS.
@@ -33,6 +33,7 @@
 // (late by any amount, typically <2s since hook ts are whole seconds) updates counters/delegations
 // and still applies lifecycle events (SubagentStart/SubagentStop), but never moves a room backwards.
 
+import { jobOf } from './roles.js';
 export const T = { THINK_MS: 3000, STUCK_MS: 60000, DOZE_MS: 180000, STALE_MS: 300000, LEAVE_MS: 5000, FAIL_MS: 3000,
   HOME_MS: 300000, HOME_TOOL_MS: 600000, PENDING_MS: 600000 };
 export const DESKS = 6;
@@ -42,6 +43,15 @@ const READ_TOOLS = new Set(['Read', 'Grep', 'Glob', 'LSP', 'WebFetch', 'WebSearc
 const WRITE_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit', 'MultiEdit']);
 const ACT = { library: 'reading', server: 'running', bench: 'writing', external: 'external', meeting: 'delegating', review: 'reviewing', desk: 'working' };
 const B_WRITE = new Set(['tee', 'mv', 'cp', 'mkdir', 'touch', 'patch', 'chmod', 'ln', 'rm']);
+const B_SCRIPT = new Set(['python', 'python3', 'node', 'perl', 'ruby']);
+const SCRIPT_WRITE = /writeFileSync|appendFileSync|open\([^)]*,\s*['"][wa]|\.write_text\(|\.write_bytes\(/;
+/** The script an interpreter segment runs: the segment itself plus its heredoc body (the rest of the command after
+ *  the segment's `<<`), so a write elsewhere in a chained command (`… && grep "open(f, 'w')" src`) does not count. */
+const scriptOf = (seg, target) => {
+  if (!/<</.test(seg)) return seg;
+  const t = String(target), i = t.indexOf(seg);
+  return i >= 0 ? t.slice(i) : seg;
+};
 const B_EXT = new Set(['curl', 'wget', 'gh', 'aws', 'awsx', 'ssh', 'scp', 'rsync', 'http', 'ping', 'dig', 'nc']);
 const B_READ = new Set(['rg', 'grep', 'cat', 'head', 'tail', 'less', 'ls', 'find', 'fd', 'wc', 'jq', 'tree', 'stat', 'file', 'du', 'diff', 'which', 'od']);
 const GIT_EXT = new Set(['push', 'pull', 'fetch', 'clone']);
@@ -75,6 +85,8 @@ export function classify(tool, target) {
   const { toks, seg } = bashTokens(target);
   const base = (toks[0] || '').split('/').pop(), a1 = toks[1] || '';
   if ((base === 'sed' && /\s-i/.test(seg)) || B_WRITE.has(base) || /(^|\s)>>?\s*(?!\/dev\/null)[^\s&]/.test(seg)) return 'bench';
+  // an inline script that edits files (python3 - <<'EOF' … open(p,'w') / node -e … writeFileSync) is coding too
+  if (B_SCRIPT.has(base) && SCRIPT_WRITE.test(scriptOf(seg, target))) return 'bench';
   if (B_EXT.has(base) || (base === 'git' && GIT_EXT.has(a1)) || (base === 'npm' && a1 === 'publish')) return 'external';
   if (B_READ.has(base) || base === 'sed' || (base === 'git' && GIT_READ.has(a1))) return 'library';
   return 'server';
@@ -277,7 +289,7 @@ function apply(s, e) {
     case 'UserPromptSubmit': clearBlock(); c.phase = 'prompt'; c.obs = 'inferred'; c.target = null; setPlace(s, c, 'desk', 'thinking'); break;
     case 'PreToolUse': {
       clearBlock(); c.phase = 'tool'; c.obs = 'observed'; c.tool = e.tool || null; c.target = e.target || null; c.toolSince = ms;
-      const room = c.atype === 'code-reviewer' && c.aid ? 'review' : (e.room || classify(e.tool, e.target));
+      const room = c.aid && jobOf(c.atype) === '심사' ? 'review' : (e.room || classify(e.tool, e.target));
       setPlace(s, c, room, ACT[room]);
       break;
     }

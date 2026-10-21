@@ -210,3 +210,24 @@ test('reducer: RelayDecided unblocks the character in its own room, makes no new
   assert.equal(s2.floors['web-ui'].rooms.S1.chars.main.blocked, true, 'a later prompt blocks again');
   assert.equal(reduceAll(initState(), [{ ev: 'RelayDecided', sid: 'S9', answer: 'allow', ts: ts(1) }]).floors['(unknown)'], undefined, 'unknown sid: nothing created');
 });
+
+test('plugin-namespaced agent types keep their job: ai-team:reviewer is 심사 and works in the review room', async () => {
+  const { jobOf } = await import('../public/roles.js');
+  const { reduceAll, initState } = await import('../public/reducer.js');
+  assert.equal(jobOf('ai-team:reviewer'), '심사'); assert.equal(jobOf('ai-team:implementer'), '개발'); assert.equal(jobOf('ai-team:lookup'), '조사');
+  const s = reduceAll(initState(), [
+    { ev: 'SubagentStart', sid: 'S', proj: 'p', aid: 'r1', atype: 'ai-team:reviewer', ts: '2026-10-21T10:00:00Z' },
+    { ev: 'PreToolUse', sid: 'S', proj: 'p', aid: 'r1', atype: 'ai-team:reviewer', tool: 'Bash', target: 'git diff', ts: '2026-10-21T10:00:01Z' },
+  ]);
+  assert.equal(s.floors.p.rooms.S.chars.r1.room, 'review');
+});
+
+test('classify: inline scripts that edit files count as coding (개발실)', async () => {
+  const { classify } = await import('../public/reducer.js');
+  assert.equal(classify('Bash', "cd x && python3 - <<'EOF'\np='a.js'; t=open(p).read()\nopen(p,'w').write(t)\nEOF"), 'bench');
+  assert.equal(classify('Bash', "python3 - <<'EOF'\nimport json; print(json.load(open('a.json')))\nEOF"), 'server', 'a read-only heredoc is not coding');
+  assert.equal(classify('Bash', `python3 x.py && grep "open(f, 'w')" src`), 'server', 'a write pattern in another segment does not count');
+  assert.equal(classify('Bash', "node -e \"require('fs').writeFileSync('a','b')\""), 'bench');
+  assert.equal(classify('Bash', 'node --test test/'), 'server', 'running tests stays in the server room');
+  assert.equal(classify('Bash', 'python3 -c "print(1)"'), 'server');
+});

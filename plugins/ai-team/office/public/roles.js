@@ -27,7 +27,8 @@ const known = m => (m in RANK ? m : 'unknown');
 export const rankOf = model => RANK[known(model)];
 export function jobOf(atype) {
   if (typeof atype !== 'string' || !atype) return '사원';
-  const a = atype.toLowerCase();
+  const a = atype.toLowerCase().replace(/^[\w.-]+:/, '');   // plugin agents arrive namespaced: "ai-team:reviewer"
+  atype = atype.replace(/^[\w.-]+:/, '');
   return JOB[atype] || JOB[a] || (/(^|-)(dev|developer|implementer)$/.test(a) ? '개발' : '사원');   // any *-dev agent is a developer
 }
 

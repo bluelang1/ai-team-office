@@ -11,7 +11,7 @@ import { SeatBook } from './seats.js';
 import { displayName, lookOf, rankOf, jobOf, JOB_LONG, nickname, nameFromWho, resetNames, ACT_KO, hash32, mainTitle } from './roles.js';
 import { layoutFloors, mountBuilding, renderOverview, elevatorFx } from './building.js';
 import { openFloorEditor } from './editor.js';
-import { ceoStep, ceoList, ceoResolve, ceoReset, ceoExpire, HIGH, dismissKey, visibleQueue, releasePlan, DismissStore, ceoSpots, reportText } from './ceo.js';
+import { ceoStep, ceoList, ceoResolve, ceoReset, ceoExpire, HIGH, dismissKey, visibleQueue, releasePlan, DismissStore, ceoSpots, reportText, CEO_PLAN, CEO_KNOCK, ceoEntry, HoverHold } from './ceo.js';
 import { Usage, bindTips, usageSummaryHTML, detailHTML } from './charts.js';
 import { applyFrame, sweep, resetRelay, mergeQueue, relayHTML, relayLive, onRelayClick, onRelayInput, decidedKey, keyOfRelay, releaseRelay, officeHeaders, staleBoot } from './ceocard.js';
 import * as sim from './sim.js';
@@ -100,6 +100,20 @@ function chime() {
     });
   } catch { /* audio unavailable */ }
 }
+/** Two soft wooden knocks (only when the sound toggle is on). */
+function knockSound() {
+  try {
+    audio ||= new AudioContext();
+    const t = audio.currentTime;
+    [0, 0.13].forEach(d => {
+      const o = audio.createOscillator(), g = audio.createGain();
+      o.frequency.setValueAtTime(190, t + d); o.frequency.exponentialRampToValueAtTime(90, t + d + 0.07); o.type = 'triangle';
+      g.gain.setValueAtTime(0.0001, t + d); g.gain.exponentialRampToValueAtTime(0.12, t + d + 0.005);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + d + 0.09);
+      o.connect(g).connect(audio.destination); o.start(t + d); o.stop(t + d + 0.1);
+    });
+  } catch { /* audio unavailable */ }
+}
 applyIcons(document.documentElement); applySound();
 let toastT = 0;
 function toast(msg) { const t = $('toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => { t.hidden = true; }, 3200); }
@@ -109,7 +123,7 @@ function setConn(st, text) { const el = $('conn'); el.dataset.state = st; el.tex
 let es = null, dayEnd = 0;
 function resetView() {
   state = initState(); queue = []; clearSprites(); lastTickerSeq = 0; $('ticker').textContent = '';
-  usage.reset(); ceoReset(waiting); bows.clear(); decided.clear(); resetRelay(); lastList = []; queueKeys = new Set(); counts.clear(); projSeen.length = 0; projSet.clear(); resetNames();
+  usage.reset(); ceoReset(waiting); ceoKnown = null; bows.clear(); decided.clear(); resetRelay(); lastList = []; queueKeys = new Set(); counts.clear(); projSeen.length = 0; projSet.clear(); resetNames();
   ui.live = false; stopSim?.(); stopSim = null; dirtyAll();
 }
 // Viewer id for this page: lets POST /viewer say "this tab is hidden" so a background tab does not hold relay items.
@@ -638,6 +652,15 @@ function animate(now) {
 
 // ---------------- 대표실 (fixed corner room, all floors) ----------------
 const figs = new Map();
+let ceoKnown = null;   // queue keys at the previous live render; null until the first one (reload/replay: nobody knocks)
+/** A newcomer has knocked: walk from the door to the current spot (unless already sent back). */
+function endKnock(f) {
+  f.knock = false; f.el.classList.remove('knock');
+  if (f.leaving) return;
+  f.el.classList.add('entering'); f.el.style.setProperty('--qr', String(f.r));
+  f.spec = { ...f.spec, pose: f.q.prio === HIGH ? 'hand' : 'stand' };
+  setTimeout(() => f.el.classList.remove('entering'), CEO_KNOCK.walk);
+}
 const charOf = aid => { for (const f of Object.values(state.floors)) for (const r of Object.values(f.rooms)) if (r.chars[aid]) return r.chars[aid]; return null; };
 function whoOf(q) {
   const c = q.aid ? charOf(q.aid) : null;
@@ -681,24 +704,33 @@ function renderCeo(list) {
     if (!f) {
       const el = document.createElement('button');
       el.type = 'button'; el.className = 'qf';
-      el.innerHTML = '<span class="qb"></span><canvas width="24" height="32"></canvas><span class="qn"></span>';
-      const sameFloor = q.sid === ui.sid;
-      if (ui.live && !reducedMotion.matches) el.classList.add(sameFloor ? 'arrive' : 'warp');
+      el.innerHTML = '<span class="qb"></span><span class="qk" aria-hidden="true">똑똑</span><canvas width="24" height="32"></canvas><span class="qn"></span>';
+      // Newcomers stop at the door, knock ("똑똑"), then walk to their spot (ceo.js ceoEntry; never on reload/replay).
+      const entry = ceoEntry(q.key, { known: ceoKnown, sameFloor: q.sid === ui.sid, reduced: reducedMotion.matches });
+      if (entry.anim) el.classList.add(entry.anim);
       line.append(el);
-      f = { el, cv: el.querySelector('canvas'), q };
+      f = { el, cv: el.querySelector('canvas'), q, knock: entry.knock };
       figs.set(q.key, f);
+      if (entry.knock) {
+        // at the door (kept fully inside the room); a second simultaneous newcomer waits a step behind
+        f.door = Math.min(CEO_PLAN.door, roomW - 14) - 14 * [...figs.values()].filter(g => g.knock && g !== f).length;
+        el.classList.add('knock');
+        const ff = f; setTimeout(() => endKnock(ff), CEO_KNOCK.ms);
+        if (ui.sound) setTimeout(knockSound, CEO_KNOCK.bubbleAt);
+      }
     }
     const w = whoOf(q), sp = spots[i];
-    f.q = q; f.el.dataset.key = q.key; f.el.classList.toggle('front', i === 0);
-    f.el.style.setProperty('--qr', String(sp.r)); f.el.dataset.face = sp.face;
+    f.q = q; f.r = sp.r; f.el.dataset.key = q.key; f.el.classList.toggle('front', i === 0);
+    f.el.style.setProperty('--qr', String(f.knock ? f.door : sp.r)); f.el.dataset.face = sp.face;
     f.el.classList.toggle('hi', q.prio === HIGH); f.el.classList.toggle('lo', q.prio !== HIGH); f.el.classList.toggle('can', !!q.relay && q.relay.status === 'pending');
     const txt = q.text.length > 18 ? `${q.text.slice(0, 17)}…` : q.text;
     const qb = f.el.querySelector('.qb'); if (qb.textContent !== txt) qb.textContent = txt;
     const nm = displayName(w), fn = rowOf(q.proj)?.n, short = `${fn ? `${fn}F ` : ''}${q.aid ? nickname(q.aid) : '실장'}`;
     const qn = f.el.querySelector('.qn'); if (qn.textContent !== short) qn.textContent = short;
     f.el.setAttribute('aria-label', `${nm}: ${q.text}`);
-    f.spec = { look: lookOf(w), model: MODELS.includes(w.model) ? w.model : 'unknown', view: 'side', pose: q.prio === HIGH ? 'hand' : 'stand', prop: 'clipboard' };
+    f.spec = { look: lookOf(w), model: MODELS.includes(w.model) ? w.model : 'unknown', view: 'side', pose: f.knock || q.prio === HIGH ? 'hand' : 'stand', prop: 'clipboard' };
   });
+  ceoKnown = ui.live ? new Set(list.map(q => q.key)) : null;
   for (const [k, f] of figs) if (!keys.has(k) && !f.leaving) {
     f.leaving = now; f.spec = { ...f.spec, pose: 'bow', prop: null }; f.el.classList.add('bye');
     setTimeout(() => { f.el.remove(); figs.delete(k); }, reducedMotion.matches ? 0 : 480);
@@ -712,7 +744,7 @@ function renderCeo(list) {
 }
 const togglePop = (kind, key, el) => { if (pop.pinned && pop.kind === kind && pop.key === key) closePop(); else openPop(kind, key, el, true); };
 $('ceo-line').addEventListener('click', ev => { const b = ev.target.closest('.qf'); if (b) togglePop('q', b.dataset.key, b); });
-$('ceo-line').addEventListener('pointerover', ev => { const b = ev.target.closest('.qf'); if (b && !pop.pinned) openPop('q', b.dataset.key, b, false); });
+$('ceo-line').addEventListener('pointerover', ev => { const b = ev.target.closest('.qf'); if (b && !pop.pinned) { openPop('q', b.dataset.key, b, false); if (holdable(ev)) hover.enter('anchor'); } });
 // Narrow screens: opening the 대표실 banner jumps straight to the first request that needs an answer (2 taps to approve).
 function openFirstCard() {
   if (!narrowMQ.matches) return;
@@ -726,7 +758,13 @@ $('needs').onclick = () => { $('ceo').classList.add('open', 'flash'); $('ceo-h')
 // ---------------- popover card: character or 대표실 request ----------------
 const pop = { kind: null, key: null, pinned: false, anchor: null };
 function openPop(kind, key, anchorEl, pinned) { Object.assign(pop, { kind, key, pinned, anchor: anchorEl }); renderPop(); }
-function closePop() { pop.kind = null; pop.pinned = false; $('pop').hidden = true; }
+function closePop() { pop.kind = null; pop.pinned = false; $('pop').hidden = true; hover.reset(); }
+// Hover cards (mouse, wide screens): the card stays open while the pointer is on the character or on the card; leaving
+// either gives ~300ms to cross over, so 승인/거절 work on the first click without pinning. Touch/narrow: unchanged.
+const hover = new HoverHold(() => { if (!pop.pinned) closePop(); });
+const holdable = ev => ev.pointerType === 'mouse' && !narrowMQ.matches;
+/** The pointer left a hover anchor (character or 대표실 figure). */
+function anchorOut(ev) { if (pop.pinned) return; if (holdable(ev)) hover.leave('anchor'); else closePop(); }
 let liveSince = 0, repBody = '';
 function renderPop() {
   const el = $('pop');
@@ -822,9 +860,15 @@ $('pop').addEventListener('click', async ev => {
     toast(ok ? '터미널을 앞으로 가져왔어요' : `터미널에서 답해 주세요 · 세션 ${q.sid.slice(0, 4)}`);
   }
 });
-spritesEl.addEventListener('pointerover', ev => { const ch = ev.target.closest('.char'); if (ch && !pop.pinned && ch.dataset.id !== '__ceo') openPop('c', ch.dataset.id, ch, false); });
-spritesEl.addEventListener('pointerout', ev => { const ch = ev.target.closest('.char'); if (ch && !pop.pinned && !ch.contains(ev.relatedTarget)) closePop(); });
-$('ceo-line').addEventListener('pointerout', ev => { const b = ev.target.closest('.qf'); if (b && !pop.pinned && !b.contains(ev.relatedTarget)) closePop(); });
+spritesEl.addEventListener('pointerover', ev => { const ch = ev.target.closest('.char'); if (ch && !pop.pinned && ch.dataset.id !== '__ceo') { openPop('c', ch.dataset.id, ch, false); if (holdable(ev)) hover.enter('anchor'); } });
+spritesEl.addEventListener('pointerout', ev => { const ch = ev.target.closest('.char'); if (ch && !ch.contains(ev.relatedTarget)) anchorOut(ev); });
+$('ceo-line').addEventListener('pointerout', ev => { const b = ev.target.closest('.qf'); if (b && !b.contains(ev.relatedTarget)) anchorOut(ev); });
+$('pop').addEventListener('pointerenter', ev => { if (!pop.pinned && holdable(ev)) hover.enter('card'); });
+$('pop').addEventListener('pointerleave', ev => { if (!pop.pinned && holdable(ev)) hover.leave('card'); });
+// Pressing anything inside a hover-opened card pins it, so typing a reason or a slow click never loses it.
+const pinHovered = () => { if (pop.kind && !pop.pinned) { pop.pinned = true; hover.reset(); } };
+$('pop').addEventListener('pointerdown', pinHovered);
+$('pop').addEventListener('focusin', pinHovered);      // tabbing into the reason box pins it too
 spritesEl.addEventListener('click', ev => { const ch = ev.target.closest('.char'); if (ch && ch.dataset.id !== '__ceo') togglePop('c', ch.dataset.id, ch); });
 document.addEventListener('pointerdown', ev => { if (pop.pinned && !ev.target.closest('#pop, .char, .qf')) closePop(); });
 document.addEventListener('keydown', ev => { if (ev.key === 'Escape') { closePop(); if (!$('umodal').hidden) closeModal(); } });

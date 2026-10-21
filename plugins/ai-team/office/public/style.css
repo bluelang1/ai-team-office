@@ -267,10 +267,14 @@ button { font: inherit; color: inherit; }
 .ceo-desk i { position: absolute; display: block; }
 .ceo-desk .dtop { left: 0; right: 0; top: 0; height: calc(3px * var(--s)); background: linear-gradient(#c58b52 0 34%, #a8703c 34% 80%, #7a4e28 80%); box-shadow: 0 0 0 2px var(--edge); }
 .ceo-desk .dleg { right: calc(1px * var(--s)); top: calc(3px * var(--s)); bottom: 0; width: calc(2px * var(--s)); background: #7a4e28; box-shadow: 0 0 0 2px var(--edge); }
-.ceo-desk .dped { left: calc(1px * var(--s)); top: calc(3px * var(--s)); bottom: 0; width: calc(11px * var(--s)); box-shadow: 0 0 0 2px var(--edge);
-  background: repeating-linear-gradient(#a8703c 0 calc(4px * var(--s) - 2px), #6b4424 calc(4px * var(--s) - 2px) calc(4px * var(--s))); }
-.ceo-desk .dped::before, .ceo-desk .dped::after { content: ""; position: absolute; left: calc(4px * var(--s)); top: calc(1.5px * var(--s)); width: calc(3px * var(--s)); height: calc(1px * var(--s)); background: #e3c48a; box-shadow: 0 0 0 1px #4a2f18; }
-.ceo-desk .dped::after { top: calc(5.5px * var(--s)); }
+/* drawer pedestal seen from its SIDE: a plain recessed side panel faces the door/viewer; the drawer fronts face the
+   대표 (right), so only their edge (seams) and the handle tips show on the right edge. */
+.ceo-desk .dped { left: calc(1px * var(--s)); top: calc(3px * var(--s)); bottom: 0; width: calc(11px * var(--s)); background: #8f5b2e;
+  box-shadow: 0 0 0 2px var(--edge), inset calc(1px * var(--s)) calc(1px * var(--s)) 0 #a8703c, inset calc(-1px * var(--s)) calc(-1px * var(--s)) 0 #6b4424; }
+.ceo-desk .dped::before { content: ""; position: absolute; right: 0; top: 0; bottom: 0; width: calc(1px * var(--s));
+  background: repeating-linear-gradient(#c58b52 0 calc(4.5px * var(--s) - 2px), #4a2f18 calc(4.5px * var(--s) - 2px) calc(4.5px * var(--s))); }
+.ceo-desk .dped::after { content: ""; position: absolute; left: 100%; top: calc(1.5px * var(--s)); width: calc(1px * var(--s)); height: calc(1px * var(--s));
+  background: #e3c48a; box-shadow: 0 calc(4.5px * var(--s)) 0 #e3c48a; }
 .ceo-desk .laptop { right: calc(1px * var(--s)); bottom: 100%; width: calc(9px * var(--s)); height: calc(1px * var(--s)); background: #c9ced6; box-shadow: 0 0 0 1px #5d6772; }
 .ceo-desk .laptop::before { content: ""; position: absolute; left: 0; bottom: 100%; width: calc(1px * var(--s)); height: calc(7px * var(--s)); background: linear-gradient(90deg, #2a2f37 55%, #8fd3f4 55%);
   box-shadow: 0 0 0 1px #5d6772; transform: skewX(10deg); transform-origin: bottom; }
@@ -289,6 +293,15 @@ button { font: inherit; color: inherit; }
 .qf.arrive { animation: qin .45s steps(4) both; } .qf.warp { animation: warp .6s steps(5) both; }
 .qf.warp::after { content: ""; position: absolute; inset: 10px 4px 20px; background: radial-gradient(#fff 15%, #c8b6f0 30%, transparent 60%); animation: sparkle .6s steps(4) both; pointer-events: none; }
 .qf.bye { animation: qout .48s steps(4) both; }
+/* knock (ceo.js CEO_KNOCK: 1.35s at the door, "똑똑" from 40%, then a .9s walk to the spot). Never under reduced motion. */
+.qf .qk { display: none; position: absolute; bottom: 100%; left: 55%; font-size: 10px; line-height: 14px; background: var(--bubble); color: var(--bubble-ink);
+  padding: 0 5px; white-space: nowrap; box-shadow: var(--px-thin); z-index: 5; pointer-events: none; }
+.qf.knock .qk { display: block; animation: kshow 1.35s steps(1) both; }
+.qf.knock .qb, .qf.entering .qb { display: none; }
+.qf.knock canvas { animation: knock .18s steps(2) .55s 4; }
+.qf.entering { transition: right .9s steps(9); }
+@keyframes kshow { 0%, 39% { opacity: 0; } 40%, 100% { opacity: 1; } }
+@keyframes knock { 50% { transform: translateX(calc(1px * var(--s))); } }
 @keyframes qin { from { transform: translateX(-40px); opacity: 0; } }
 @keyframes warp { 0% { opacity: 0; transform: scaleY(.1); } 60% { opacity: 1; transform: scaleY(1.1); } }
 @keyframes sparkle { 0% { opacity: 1; transform: scale(.3); } 100% { opacity: 0; transform: scale(1.6); } }
