@@ -4,9 +4,10 @@ LOG="$HOME/.claude/logs/office-events.jsonl"
 mkdir -p "$(dirname "$LOG")"
 TS=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
 jq -c --arg ts "$TS" '
-  def head(n): if type=="string" then (if length>n then .[0:n]+"…" else . end) else . end;
+  def head(n): if .==null then null elif type=="string" then (if length>n then .[0:n]+"…" else . end) else (tojson|.[0:n]) end;   # non-strings bounded too
   def proj: ((env.CLAUDE_PROJECT_DIR // .cwd // "") | split("/") | last);
   (.tool_input // {}) as $i |
+  (if .hook_event_name=="Stop" or .hook_event_name=="SubagentStop" then 4000 else 300 end) as $msgmax |
   {ts:$ts,
    ev:(.hook_event_name // "unknown"),
    sid:.session_id,
@@ -28,7 +29,9 @@ jq -c --arg ts "$TS" '
    child:(.tool_response.agentId // null),
    resolved:(.tool_response.resolvedModel // null),
    prompt:(.prompt|head(200)),
-   msg:(.message // .last_assistant_message | head(300)),
+   # Stop/SubagentStop: the final report (hook input `last_assistant_message`, per the hooks docs; the transcript may
+   # lag), kept long enough to read in the 대표실 card. Other events (Notification) stay short.
+   msg:(.message // .last_assistant_message | head($msgmax)),
    ntype:(.notification_type // null),
    # calls that need a human answer: question text (AskUserQuestion) / approval target (PermissionRequest)
    ask:(if .tool_name=="AskUserQuestion" then (($i.questions // [])|map(.question // "")|join(" / ")|head(300))

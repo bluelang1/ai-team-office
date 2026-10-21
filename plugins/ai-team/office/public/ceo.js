@@ -5,7 +5,8 @@
 //   PreToolUse tool=AskUserQuestion           -> kind ask     HIGH  text = ask | target
 //   PermissionRequest                         -> kind perm    HIGH  text = ask | `${tool} ${target}`
 //   Notification permission_prompt|idle_prompt-> kind notify  HIGH  text = msg (keeps an earlier HIGH entry's text)
-//   Stop (main)                               -> kind report  LOW   text = '보고 드렸어요'
+//   Stop (main)                               -> kind report  LOW   text = '보고 드렸어요', body = msg (the final report,
+//                                                                      up to 4000 chars from the hook; absent under --redact)
 //   resolved by: the same character's next PreToolUse/PostToolUse/PostToolUseFailure (an ask entry ignores the
 //   AskUserQuestion PreToolUse that opened it), UserPromptSubmit or SessionEnd on that sid, SubagentStop of that aid.
 
@@ -14,11 +15,12 @@ const keyOf = e => `${e.sid}|${e.aid || 'main'}`;
 const s = v => (typeof v === 'string' ? v : v == null ? '' : typeof v === 'number' ? String(v) : '');
 const tsOf = e => { const t = Date.parse(s(e.ts)); return Number.isFinite(t) ? t : 0; };
 
-function open(map, e, kind, prio, text) {
+function open(map, e, kind, prio, text, body = '') {
   const k = keyOf(e), prev = map.get(k);
   const keepSince = prev && prev.prio === prio;
   map.set(k, { key: k, sid: s(e.sid), proj: s(e.proj) || '(unknown)', aid: s(e.aid) || null, atype: s(e.atype) || null,
-    kind, prio, text: text.slice(0, 2000), since: keepSince ? prev.since : tsOf(e), tool: s(e.tool) || null });
+    kind, prio, text: text.slice(0, 2000), since: keepSince ? prev.since : tsOf(e), tool: s(e.tool) || null,
+    ...(body ? { body: body.slice(0, 4001) } : {}) });
 }
 
 /** Apply one event to the waiting map (mutates `map`). Returns the keys resolved by this event. */
@@ -43,7 +45,7 @@ export function ceoStep(map, e) {
       open(map, e, 'notify', HIGH, /[가-힣]/.test(msg) ? msg : e.ntype === 'idle_prompt' ? '입력을 기다리고 있어요' : '승인이 필요해요');
       break;
     }
-    case 'Stop': if (!e.aid) { drop(k); open(map, e, 'report', LOW, '보고 드렸어요'); } break;
+    case 'Stop': if (!e.aid) { drop(k); open(map, e, 'report', LOW, '보고 드렸어요', s(e.msg).trim()); } break;
     case 'UserPromptSubmit': case 'SessionEnd': dropSid(); break;
     case 'SubagentStop': drop(k); break;
     default: break;
@@ -76,6 +78,23 @@ export function ceoQueue(events, now) {
   return ceoList(map, now);
 }
 
+/** The report text for display: line breaks kept, light markdown cleanup (``` fence lines dropped, leading #
+ *  removed, **bold** / `code` marks unwrapped, - / * bullets shown as •), runs of blank lines squeezed. Plain text:
+ *  the caller still escapes it. */
+export function reportText(v) {
+  const lines = s(v).replace(/\r\n?/g, '\n').split('\n');
+  const out = [];
+  for (const raw of lines) {
+    if (/^\s*(```|~~~)/.test(raw)) continue;
+    let l = raw.replace(/^\s{0,3}#{1,6}\s+/, '').replace(/^(\s*)[-*+]\s+/, '$1• ');
+    l = l.replace(/\*\*([^*\n]+)\*\*/g, '$1').replace(/__([^_\n]+)__/g, '$1').replace(/`([^`\n]+)`/g, '$1').replace(/\s+$/, '');
+    if (!l && (!out.length || out[out.length - 1] === '')) continue;
+    out.push(l);
+  }
+  while (out.length && out[out.length - 1] === '') out.pop();
+  return out.join('\n');
+}
+
 // ---------- 돌려보내기 (send back without a decision) ----------
 /** One occurrence of a wait: the same character waiting again later (new `since`) is a new occurrence. */
 export const dismissKey = q => `${q.key}|${q.since}`;
@@ -102,9 +121,10 @@ export class DismissStore {
 // The 대표 sits with his back to the right (exterior) wall and faces LEFT, toward the door; the desk stands between
 // him and the door. People waiting queue in front of the desk on the door side and face RIGHT, toward him.
 export const CEO_PLAN = {
-  chair: { r0: 3, r1: 13, y0: 58, y1: 90 },          // r = distance from the right wall
-  boss: { r: 22, y: 90, face: 'left' },               // seated anchor (sprite centre, bottom)
-  desk: { r0: 32, r1: 48, y0: 58, y1: 92 },           // side-view desk between him and the door
+  // The chair and the 대표 share one canvas (sprites.js EXEC; canvas right edge at r 1, painter x -> r 5 + x):
+  chair: { r0: 5, r1: 16 },                           // r = distance from the right wall; backrest r 5-9, seat to r 16
+  boss: { r: 13, y: 91, face: 'left', back: 10, knee: 20, hands: [22, 24] },   // sprite centre; his back on the backrest, knee, hands
+  desk: { r0: 21, r1: 48, top: 21 },                  // side-view desk from just in front of his knees to the door side
   spot0: 60, step: 21, y: 91, min: 8,                // queue: first spot just left of the desk, then further left (label below)
 };
 /** Queue spots for n people: [{ r (centre, from the right wall), y (feet), face: 'right' }], front first.

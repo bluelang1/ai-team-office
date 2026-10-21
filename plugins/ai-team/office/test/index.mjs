@@ -6,4 +6,5 @@ import './usage.test.mjs';
 import './focus.test.mjs';
 import './relay.test.mjs';
 import './v3.test.mjs';
+import './ceo-room.test.mjs';
 import './limits.test.mjs';

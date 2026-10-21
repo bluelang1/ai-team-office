@@ -181,16 +181,31 @@ function drawSide(p, L, spec) {
   if (sit) { p(5, 19, L.pants, 8, 3); p(10, 22, shade(L.pants, -0.1), 3, 1); p(10, 22, L.pants, 3, 1); p(11, 22, L.shoe, 4, 2); }
   else if (L.skirt) { p(5, 16, L.skirt, 7, 4); p(7, 20, L.pants, 2, 2); p(9, 20, shade(L.pants, -0.15), 1, 2); p(6, 22, L.shoe, 5, 2); }
   else { p(7, 16, shade(L.pants, -0.15), 3, 6); p(5, 16, L.pants, 4, 6); p(5, 22, L.shoe, 6, 2); p(8, 22, shade(L.shoe, -0.2), 3, 2); }
-  // torso (6 wide), back edge shaded
+  sideTorso(p, L, by, spec.model);
+  sideHead(p, L, 4 + hx, hy);
+  // front arm
+  if (pose === 'hand') { p(8, by - 6, L.top, 3, 7); p(8, by - 8, L.skin, 3, 2); }
+  else if (sit) { p(8, by + 1, L.top, 3, 4); p(10, by + 4, L.top, 4, 2); p(14, by + 4, L.skin, 2, 2); }
+  else if (bow) { p(7, by + 1, L.top, 3, 7); p(8, by + 8, L.skin, 2, 2); }
+  else { p(8, by + 1, L.top, 3, 4); p(10, by + 4, L.top, 3, 2); p(13, by + 4, L.skin, 2, 2); }
+  const prop = spec.prop;
+  if (prop === 'clipboard' && !bow && pose !== 'hand') { p(12, by + 1, '#a0784a', 4, 6); p(13, by + 2, WHITE, 2, 4); p(13, by + 3, '#8a8f9c', 2, 1); }
+  if (prop === 'clipboard' && pose === 'hand') { p(11, by + 1, '#a0784a', 4, 6); p(12, by + 2, WHITE, 2, 4); }
+  if (prop === 'mug') { const v = by + 1 - (spec.frame | 0); p(15, v, WHITE, 3, 3); p(15, v, '#d64545', 3, 1); p(18, v + 1, WHITE); if (!spec.frame) p(16, v - 3, '#d9dde3', 1, 2); }
+  if (prop === 'envelope') { p(12, by + 3, '#f6e7c1', 5, 4); p(14, by + 4, '#d64545'); }
+}
+/** Profile torso (6 wide, back edge shaded) with its job details. */
+function sideTorso(p, L, by, model) {
   p(5, by, L.top, 6, 8); p(5, by, shade(L.top, -0.15), 1, 8);
   if (L.vest) { p(5, by, L.vest, 4, 8); }
   if (L.tie) { p(10, by, L.shirt, 1, 3); p(10, by + 1, L.tie, 1, 4); }
   if (L.collar || L.blouse) p(9, by, '#ffffff', 2, 1);
   if (L.belt) p(5, by + 6, L.belt, 6, 1);
   if (L.coat) p(10, by + 2, L.pen, 1, 2);
-  if (spec.model) { const M = MODEL_HEX[spec.model] || MODEL_HEX.unknown; p(9, by, M); p(10, by + 1, M); p(10, by + 2, '#ffffff', 1, 2); p(10, by + 2, M); }
-  // head in profile: hair over the back and top, eye + nose at the front
-  const y = (sit ? 3 : 0) + hy - (sit ? 3 : 0), x = 4 + hx;
+  if (model) { const M = MODEL_HEX[model] || MODEL_HEX.unknown; p(9, by, M); p(10, by + 1, M); p(10, by + 2, '#ffffff', 1, 2); p(10, by + 2, M); }
+}
+/** Profile head: hair over the back and top, eye + nose at the front. */
+function sideHead(p, L, x, y) {
   p(x, y, L.skin, 8, 8); p(x + 8, y + 4, L.skin);                                     // nose
   p(x, y, L.hair, 8, 2); p(x, y + 2, L.hair, 4, 4); p(x, y + 6, shade(L.hair, -0.12), 2, 1);
   if (L.long) p(x - 1, y + 2, L.hair, 2, 8);
@@ -203,22 +218,57 @@ function drawSide(p, L, spec) {
   if (L.beret) { p(x - 1, y - 1, L.beret, 8, 2); p(x + 3, y - 2, shade(L.beret, -0.2), 1, 1); }
   if (L.hat) { p(x - 1, y + 1, shade(L.hat, -0.15), 11, 1); p(x, y - 2, L.hat, 8, 3); }
   if (L.headset) { p(x + 3, y - 1, L.headset, 3, 1); p(x + 4, y, L.headset, 1, 5); p(x + 5, y + 6, L.headset, 3, 1); }
-  // front arm
-  if (pose === 'hand') { p(8, by - 6, L.top, 3, 7); p(8, by - 8, L.skin, 3, 2); }
-  else if (sit) { p(8, by + 1, L.top, 3, 4); p(10, by + 4, L.top, 4, 2); p(14, by + 4, L.skin, 2, 2); }
-  else if (bow) { p(7, by + 1, L.top, 3, 7); p(8, by + 8, L.skin, 2, 2); }
-  else { p(8, by + 1, L.top, 3, 4); p(10, by + 4, L.top, 3, 2); p(13, by + 4, L.skin, 2, 2); }
-  const prop = spec.prop;
-  if (prop === 'clipboard' && !bow && pose !== 'hand') { p(12, by + 1, '#a0784a', 4, 6); p(13, by + 2, WHITE, 2, 4); p(13, by + 3, '#8a8f9c', 2, 1); }
-  if (prop === 'clipboard' && pose === 'hand') { p(11, by + 1, '#a0784a', 4, 6); p(12, by + 2, WHITE, 2, 4); }
-  if (prop === 'mug') { const v = by + 1 - (spec.frame | 0); p(15, v, WHITE, 3, 3); p(15, v, '#d64545', 3, 1); p(18, v + 1, WHITE); if (!spec.frame) p(16, v - 3, '#d9dde3', 1, 2); }
-  if (prop === 'envelope') { p(12, by + 3, '#f6e7c1', 5, 4); p(14, by + 4, '#d64545'); }
 }
 
-/** Draw one frame. spec: { look, model, pose: stand|walk|type|read|hand|sit|bow, seat?: desk|back|standback, view?: side, frame, prop, fx } */
+// ---------- the 대표's executive chair (profile, facing right like drawSide; mirrored by CSS to face the door) ----------
+// One canvas holds chair + 대표 so they can never drift apart: chair back and seat first (behind him), then the seated
+// body (hips on the seat, back against the backrest, thighs level toward the desk, hands forward on the desk/laptop),
+// then the near armrest in front of his body, then the near arm resting on it. `spec.empty` draws the chair alone
+// (the 대표 stepped out). Painter units; x = 0 is the backrest, y = 23 the floor.
+export const EXEC = { backX: [0, 4], backY: [-3, 14], seatY: 15, seatX: [0, 11], thighY: [13, 14], knee: 14, hand: [17, 18], handY: [10, 11], torsoX: 5, floor: 23 };
+const LEATHER = { base: '#5a2f2a', hi: '#7d4a3f', dk: '#3b1d1a', tuft: '#2a1311' }, CHROME = { base: '#c4cad3', hi: '#f1f4f8', dk: '#7f8794', wheel: '#262a31' };
+function execChairBack(p) {
+  const E = EXEC, [x0, x1] = E.backX, [y0, y1] = E.backY, w = x1 - x0 + 1;
+  p(x0 + 1, y0, LEATHER.base, w - 2, 1);                                             // rounded top
+  p(x0, y0 + 1, LEATHER.base, w, y1 - y0);                                           // padded high back
+  p(x0, y0 + 1, LEATHER.dk, 1, y1 - y0);                                             // rear edge
+  p(x0 + 1, y0 + 1, LEATHER.hi, 1, y1 - y0 - 1);                                     // sheen on the padding
+  for (const y of [y0 + 4, y0 + 8, y0 + 12]) { p(x0 + 1, y, LEATHER.dk, w - 1, 1); p(x0 + 2, y, LEATHER.tuft); }   // channel seams + buttons
+  p(E.seatX[0], E.seatY, LEATHER.base, E.seatX[1] - E.seatX[0] + 1, 3);              // seat cushion
+  p(E.seatX[0] + 1, E.seatY, LEATHER.hi, E.seatX[1] - E.seatX[0] - 1, 1);
+  p(E.seatX[0], E.seatY + 2, LEATHER.dk, E.seatX[1] - E.seatX[0] + 1, 1);
+  p(3, E.seatY + 3, CHROME.dk, 5, 1);                                                // tilt plate
+  p(5, E.seatY + 4, CHROME.base, 2, 3); p(5, E.seatY + 4, CHROME.hi, 1, 3);          // gas lift
+  p(0, E.floor - 1, CHROME.base, 12, 1); p(1, E.floor - 1, CHROME.hi, 4, 1);         // five-star base in profile
+  for (const x of [0, 5, 10]) p(x, E.floor, CHROME.wheel, 2, 1);                     // casters
+}
+function execArmrest(p) {
+  p(3, 11, LEATHER.base, 7, 2); p(4, 11, LEATHER.hi, 5, 1);                           // padded arm
+  p(7, 13, CHROME.base, 1, 2); p(7, 13, CHROME.hi, 1, 1);                             // chrome strut to the seat
+}
+function drawExec(p, L, spec) {
+  execChairBack(p);
+  if (spec.empty) { execArmrest(p); return; }
+  const E = EXEC, f = spec.frame | 0, by = 6;
+  sideTorso(p, L, by, null);
+  sideHead(p, L, 4, by - 8);
+  p(E.torsoX, E.thighY[0], L.pants, E.knee - E.torsoX + 1, 2);                      // hips on the seat, thighs level
+  p(E.torsoX, E.thighY[1], shade(L.pants, -0.12), E.knee - E.torsoX + 1, 1);
+  p(12, 15, shade(L.pants, -0.08), 3, 7);                                            // shins down to the floor
+  p(12, 22, L.shoe, 4, 2); p(15, 23, shade(L.shoe, -0.2), 1, 1);
+  execArmrest(p);
+  p(7, by + 1, L.top, 3, 5); p(9, by + 1, shade(L.top, -0.15), 1, 4);                // upper arm down to the armrest
+  p(9, E.handY[0], L.top, 7, 2); p(16, E.handY[0], L.shirt || WHITE, 1, 2);          // forearm forward, cuff
+  p(E.hand[0], E.handY[0] + (f ? 0 : 1), L.skin, 2, f ? 2 : 1);                      // hands on the keys (2-frame typing)
+  if (!f) p(E.hand[0], E.handY[0], L.skin, 1, 1);
+}
+
+/** Draw one frame. spec: { look, model, pose: stand|walk|type|read|hand|sit|bow, seat?: desk|back|standback|exec (side view:
+ *  the 대표 in his chair; `empty` = chair only), view?: side, frame, prop, fx } */
 export function drawChar(ctx, spec) {
   const L = LOOKS[spec.look] || LOOKS.staff, p = painter(ctx), f = spec.frame | 0;
   const pose = spec.pose || 'stand';
+  if (spec.view === 'side' && spec.seat === 'exec') { drawExec(p, L, spec); outline(ctx); return; }
   if (spec.view === 'side') { drawSide(p, L, spec); const fx = FX[spec.fx]; if (fx) fx(p); outline(ctx); return; }
   if (spec.seat === 'back' || spec.seat === 'standback') {
     drawBack(p, L, spec, f);
@@ -252,7 +302,7 @@ export function drawChar(ctx, spec) {
 
 const cache = new Map();
 export function frame(spec) {
-  const key = `${spec.look}|${spec.model}|${spec.pose}|${spec.view || ''}|${spec.seat || ''}|${spec.anim ? 1 : 0}|${spec.frame | 0}|${spec.prop || ''}|${spec.fx || ''}`;
+  const key = `${spec.look}|${spec.model}|${spec.pose}|${spec.view || ''}|${spec.seat || ''}|${spec.empty ? 1 : 0}|${spec.anim ? 1 : 0}|${spec.frame | 0}|${spec.prop || ''}|${spec.fx || ''}`;
   let c = cache.get(key);
   if (!c) {
     c = document.createElement('canvas'); c.width = SW; c.height = SH;

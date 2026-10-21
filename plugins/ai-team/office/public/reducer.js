@@ -272,11 +272,11 @@ function apply(s, e) {
       if (e.ntype === 'permission_prompt') { c.blocked = true; setPlace(s, c, 'desk', 'blocked'); }
       else if (e.ntype === 'idle_prompt') { c.phase = 'idle'; setPlace(s, c, 'desk', 'idle'); }
       break;
-    case 'Stop': clearBlock(); c.phase = 'idle'; c.obs = 'observed'; c.msg = e.msg || null; setPlace(s, c, 'desk', 'idle'); break;
+    case 'Stop': clearBlock(); c.phase = 'idle'; c.obs = 'observed'; c.msg = typeof e.msg === 'string' && e.msg ? e.msg : null; setPlace(s, c, 'desk', 'idle'); break;
     case 'SessionEnd': r.ended = true; c.phase = 'idle'; c.obs = 'stale'; setPlace(s, c, 'desk', 'idle'); break;
     case 'SubagentStart': break; // newChar already placed it at the elevator
     case 'SubagentStop':
-      clearBlock(); c.phase = 'gone'; c.leaveAt = Math.max(ms, c.lastTs); c.msg = e.msg || null; c.obs = 'observed'; c.label = null;
+      clearBlock(); c.phase = 'gone'; c.leaveAt = Math.max(ms, c.lastTs); c.msg = typeof e.msg === 'string' && e.msg ? e.msg : null; c.obs = 'observed'; c.label = null;
       c.verdict = s.verdicts[c.id]?.v || null;
       setPlace(s, c, 'elevator', 'leaving');
       break;

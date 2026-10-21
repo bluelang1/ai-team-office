@@ -11,7 +11,7 @@ import { SeatBook } from './seats.js';
 import { displayName, lookOf, rankOf, jobOf, JOB_LONG, nickname, nameFromWho, resetNames, ACT_KO, hash32, mainTitle } from './roles.js';
 import { layoutFloors, mountBuilding, renderOverview, elevatorFx } from './building.js';
 import { openFloorEditor } from './editor.js';
-import { ceoStep, ceoList, ceoResolve, ceoExpire, HIGH, dismissKey, visibleQueue, releasePlan, DismissStore, ceoSpots } from './ceo.js';
+import { ceoStep, ceoList, ceoResolve, ceoExpire, HIGH, dismissKey, visibleQueue, releasePlan, DismissStore, ceoSpots, reportText } from './ceo.js';
 import { Usage, bindTips, usageSummaryHTML, detailHTML } from './charts.js';
 import { applyFrame, sweep, resetRelay, mergeQueue, relayHTML, relayLive, onRelayClick, onRelayInput, decidedKey, keyOfRelay, releaseRelay, officeHeaders } from './ceocard.js';
 import * as sim from './sim.js';
@@ -619,7 +619,7 @@ function animate(now) {
     paint(sp.cv, { look: sp.look, model: m, ...s });
   }
   const f = reducedMotion.matches ? 0 : Math.floor(now / 1600) % 2;
-  paint($('boss'), { look: 'ceo', model: null, view: 'side', pose: 'sit', prop: 'mug', frame: f });
+  paint($('boss'), { look: 'ceo', model: null, view: 'side', pose: 'sit', seat: 'exec', empty: $('ceo').classList.contains('away'), frame: f });
   for (const fg of figs.values()) paint(fg.cv, fg.spec);
   const night = ambient.step(now, { sky: skyNow(), reduced: reducedMotion.matches });     // shooting stars, park couples
   if (fxDirty || night || ambient.was || (!reducedMotion.matches && now - fxAt > 240)) {
@@ -668,7 +668,6 @@ function renderCeo(list) {
   $('ceo-n').textContent = `대기 ${list.length}`;
   $('ceo-bell').hidden = !high; $('ceo-bell').querySelector('b').textContent = high;
   $('ceo').classList.toggle('ringing', high > 0);
-  $('ceo-empty').hidden = list.length > 0;
   const line = $('ceo-line'), keys = new Set(), now = performance.now();
   // Queue spots in front of the desk on the door side (ceo.js CEO_PLAN); everyone faces right, toward the 대표.
   const cs = parseFloat(getComputedStyle($('ceo')).getPropertyValue('--s')) || S, roomW = (line.clientWidth || 268) / cs;
@@ -725,22 +724,26 @@ $('needs').onclick = () => { $('ceo').classList.add('open', 'flash'); $('ceo-h')
 const pop = { kind: null, key: null, pinned: false, anchor: null };
 function openPop(kind, key, anchorEl, pinned) { Object.assign(pop, { kind, key, pinned, anchor: anchorEl }); renderPop(); }
 function closePop() { pop.kind = null; pop.pinned = false; $('pop').hidden = true; }
+let liveSince = 0, repBody = '';
 function renderPop() {
   const el = $('pop');
   let html = '';
+  repBody = '';
   if (pop.kind === 'q') {
     const q = lastList.find(x => x.key === pop.key);
     if (!q) return closePop();
     const w = whoOf(q);
+    repBody = q.kind === 'report' && typeof q.body === 'string' ? q.body : '';
     html = `<header><b>${esc(displayName(w))}</b><span class="prio ${q.prio}">${q.prio === HIGH ? '답이 필요해요' : '보고'}</span></header>
       <dl><dt>층</dt><dd>${esc(floorLabel(q.proj))}${rowOf(q.proj)?.label !== q.proj ? ` <small>${esc(q.proj)}</small>` : ''}</dd>
       <dt>세션</dt><dd class="mono">${esc(q.sid.slice(0, 4))}</dd><dt>기다린 시간</dt><dd class="live-wait"></dd></dl>
-      ${q.relay ? relayHTML(q.relay) : `<p class="ask">${esc(q.text)}</p><p class="rl-left">${relayNote}</p>`}
-      <div class="btns">${RELEASE_BTN}<button type="button" class="chipbtn" data-a="copy">복사</button><button type="button" class="chipbtn primary" data-a="focus">터미널로</button></div>`;
+      ${q.relay ? relayHTML(q.relay) : q.kind === 'report' ? reportHTML(repBody) : `<p class="ask">${esc(q.text)}</p><p class="rl-left">${relayNote}</p>`}
+      <div class="btns">${RELEASE_BTN}${q.kind === 'report' ? '' : '<button type="button" class="chipbtn" data-a="copy">복사</button>'}<button type="button" class="chipbtn primary" data-a="focus">터미널로</button></div>`;
   } else if (pop.kind === 'c') {
     const sp = sprites.get(pop.key), c = sp?.c && view(sp.c, spriteSid);
     if (!c || c.ceo) return closePop();
     const job = jobOf(c.atype), since = c.phase === 'tool' && c.toolSince ? c.toolSince : c.lastTs;
+    liveSince = since; repBody = typeof c.msg === 'string' ? c.msg : '';
     const v = c.aid ? (c.verdict || state.verdicts[c.aid]?.v) : null;
     const mine = !c.aid ? state.deleg.filter(d => d.sid === spriteSid && (d.verdict || state.verdicts[d.child]?.v)).map(d => d.verdict || state.verdicts[d.child].v) : [];
     const vs = c.aid ? (v ? `<span class="vstamp ${v}">${VERDICT_KO[v]}</span> ${esc(state.verdicts[c.aid]?.note || '')}` : '판정 전')
@@ -749,11 +752,17 @@ function renderPop() {
       <dl><dt>직급</dt><dd>${c.aid ? rankOf(c.model) : '실장'}</dd><dt>직무</dt><dd>${c.aid ? `${JOB_LONG[job]} <small>${esc(c.atype)}</small>` : '실장 (메인 세션)'}</dd>
       <dt>모델</dt><dd>${c.model === 'unknown' && !c.aid ? '아직 모름 <small>(사용량 기록 대기)</small>' : esc(c.model)}</dd><dt>effort</dt><dd>${esc(c.effort || '—')} ${pipsSpan(c.effort, c.model)}</dd>
       <dt>현재 일</dt><dd>${esc(c.label || ACT_KO[c.act] || c.act)}${c.target ? ` · ${esc(head(c))}` : ''}</dd>
-      <dt>경과</dt><dd>${fmtDur(state.now - since)}</dd><dt>오늘 건수</dt><dd>도구 ${counts.get(`${spriteSid}|${c.aid || 'main'}`) || 0}건</dd>
+      <dt>경과</dt><dd class="live-elapsed"></dd><dt>오늘 건수</dt><dd>도구 ${counts.get(`${spriteSid}|${c.aid || 'main'}`) || 0}건</dd>
       <dt>판정</dt><dd>${vs}</dd><dt>상태</dt><dd>${OBS_KO[c.obs]}${c.failCount ? ` · 실패 ${c.failCount}` : ''}</dd></dl>
+      ${repBody ? reportHTML(repBody, '마지막 보고') : ''}
       ${queueKeys.has(`${spriteSid}|${c.aid || 'main'}`) ? `<p class="rl-left">대표실에서 기다리는 중이에요</p><div class="btns">${RELEASE_BTN}</div>` : ''}`;
   } else return;
-  if (el._h !== html) { el._h = html; el.innerHTML = html; }
+  if (el._h !== html) {                                         // only when the content changed (live values below use textContent)
+    const keep = el._rep === repBody ? el.querySelector('.report')?.scrollTop || 0 : 0;   // same report: keep the reader's place
+    el._h = html; el._rep = repBody; el.innerHTML = html;
+    const rep = el.querySelector('.report'); if (rep && keep) rep.scrollTop = keep;
+  }
+  if (pop.kind === 'c') { const n = el.querySelector('.live-elapsed'); if (n) n.textContent = fmtDur(state.now - liveSince); }
   if (pop.kind === 'q') {
     const q = lastList.find(x => x.key === pop.key), lw = el.querySelector('.live-wait');
     if (lw) lw.textContent = fmtDur(Date.now() - q.since);
@@ -769,12 +778,28 @@ function renderPop() {
   }
 }
 const relayNote = '이 요청은 여기서 답할 수 없어요 (대표실 중계가 꺼져 있거나 지난 요청). 터미널에서 답해 주세요.';
+/** The 실장's (or a subagent's) final report: escaped plain text with line breaks, its own scroll, and 전체 복사. */
+function reportHTML(body, title = '보고 내용') {
+  const t = reportText(body);
+  if (!t) return `<p class="ask">보고 드렸어요</p><p class="rl-left">보고 본문이 기록되지 않았어요 (가림 모드이거나 이전 훅).</p>`;
+  return `<div class="report-h"><b>${esc(title)}</b><button type="button" class="chipbtn" data-a="copyall">전체 복사</button></div>
+      <div class="report" tabindex="0" role="region" aria-label="${esc(title)}">${esc(t)}</div>`;
+}
+const popReport = () => {
+  const v = pop.kind === 'q' ? popQ()?.body : sprites.get(pop.key)?.c?.msg;
+  return typeof v === 'string' ? v : '';
+};
 const popQ = () => lastList.find(x => x.key === pop.key);
 $('pop').addEventListener('input', ev => onRelayInput(ev, popQ()?.relay, renderPop));
 $('pop').addEventListener('change', ev => { if (ev.target.type === 'checkbox') onRelayInput(ev, popQ()?.relay, renderPop); });
 $('pop').addEventListener('keydown', ev => { if (ev.key === 'Enter' && ev.target.classList.contains('why')) ev.target.closest('.deny')?.querySelector('[data-a="deny"]')?.click(); });
 $('pop').addEventListener('click', async ev => {
   const b = ev.target.closest('button'); if (!b) return;
+  if (b.dataset.a === 'copyall') {
+    const t = popReport();
+    try { await navigator.clipboard.writeText(t); toast('보고 전체를 복사했어요'); } catch { toast('복사가 막혔어요. 보고를 직접 선택해 주세요'); }
+    return;
+  }
   if (b.dataset.a === 'release') {
     const key = pop.kind === 'q' ? pop.key : `${spriteSid}|${sprites.get(pop.key)?.c.aid || 'main'}`;
     const q = lastList.find(x => x.key === key);
@@ -982,7 +1007,7 @@ function frame(now) {
   raf = 0; clearTimeout(animT);
   drain();
   if (sceneDirty || panelDirty || bldDirty) {
-    const sel = select(), list = lastList = mergeQueue(ceoList(waiting, Date.now())), k = compliance(state);
+    const sel = select(), list = lastList = visibleQueue(mergeQueue(ceoList(waiting, Date.now())), dismissed), k = compliance(state);   // sent-back occurrences stay gone after a reconnect replays history
     queueKeys = new Set(list.map(q => q.key));
     renderTabs(sel);
     stage.classList.toggle('ov', ui.overview); $('overview').hidden = !ui.overview;

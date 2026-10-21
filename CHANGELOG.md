@@ -20,3 +20,10 @@
 ## 0.2.1 — 2026-10-21
 - CEO room: the CEO faces the door; visitors queue in front of the desk facing him
 - Night view: occasional shooting stars over the mountains; couples strolling in the park
+
+## 0.2.2 — 2026-10-21
+- CEO room: report cards show the full report (scrollable, copy button); removed the empty-room note
+- CEO sits properly in a high-back executive chair
+- Fix: sent-back reports no longer reappear after reconnect; card no longer re-renders every second
+- Hook: keep up to 4000 chars of the final message on Stop/SubagentStop; bound non-string values
+- Add CLAUDE.md contributor guide

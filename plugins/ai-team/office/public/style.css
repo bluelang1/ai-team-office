@@ -256,19 +256,25 @@ button { font: inherit; color: inherit; }
 .ceo-all:hover { background: var(--sand); }
 .chipbtn.ghost { background: transparent; color: var(--ink); box-shadow: 0 0 0 1px var(--muted); }
 .chipbtn.ghost:hover { background: var(--cream); }
-.ceo-room.away .boss { opacity: 0; }
-/* the 대표 faces left (toward the door); chair against the right wall, side-view desk between him and the queue */
-.ceo-chair { position: absolute; right: calc(3px * var(--s)); bottom: calc(9px * var(--s)); width: calc(10px * var(--s)); height: calc(30px * var(--s)); pointer-events: none;
-  background: linear-gradient(90deg, #3d3240 0 55%, #2a2230 55%); border-radius: 3px 6px 2px 2px; box-shadow: 0 0 0 2px var(--edge); }
-.ceo-chair::after { content: ""; position: absolute; right: 30%; bottom: calc(6px * var(--s)); width: calc(12px * var(--s)); height: calc(4px * var(--s)); background: #4a3d4f; box-shadow: 0 0 0 2px var(--edge); }
-.ceo-boss { position: absolute; right: calc(10px * var(--s)); bottom: calc(10px * var(--s)); width: calc(24px * var(--s)); height: calc(32px * var(--s)); }
+/* the 대표 faces left (toward the door), back to the right wall. His executive chair is drawn in the same canvas (sprites.js
+   drawExec: backrest behind him, armrest in front); away = chair only. The side-view desk starts right at his knees
+   (ceo.js CEO_PLAN: chair r 5-9, knee r 20, desk r 21-48; hands rest on the laptop at desk height). */
+.ceo-boss { position: absolute; right: calc(1px * var(--s)); bottom: calc(9px * var(--s)); width: calc(24px * var(--s)); height: calc(32px * var(--s)); z-index: 2; }
 .ceo-boss .boss { width: 100%; height: 100%; image-rendering: pixelated; transform: scaleX(-1); display: block; }
 .ceo-boss .ceo-tag { top: calc(100% + 2px); --m: #2c3e70; font-weight: 700; }
-.ceo-desk { position: absolute; right: calc(32px * var(--s)); bottom: calc(8px * var(--s)); width: calc(16px * var(--s)); height: calc(34px * var(--s)); pointer-events: none; }
-.ceo-desk .dtop { position: absolute; inset: 0; background: linear-gradient(#b07a46 0 84%, #7a4e28 84%); box-shadow: 0 0 0 2px var(--edge), inset 2px 2px 0 rgba(255, 255, 255, .18); }
-.ceo-desk .laptop { position: absolute; left: calc(3px * var(--s)); top: calc(8px * var(--s)); width: calc(9px * var(--s)); height: calc(7px * var(--s)); background: #c9ced6; box-shadow: 0 0 0 1px #5d6772; }
-.ceo-desk .laptop::before { content: ""; position: absolute; left: -2px; top: -3px; width: calc(2px * var(--s)); height: calc(9px * var(--s)); background: #2a2f37; }
-.ceo-desk .mugd { position: absolute; left: calc(5px * var(--s)); top: calc(20px * var(--s)); width: calc(4px * var(--s)); height: calc(4px * var(--s)); background: #fff; box-shadow: 0 0 0 1px #8b7a68, inset 0 3px 0 #6b4a32; border-radius: 50%; }
+.ceo-desk { position: absolute; right: calc(21px * var(--s)); bottom: calc(9px * var(--s)); width: calc(27px * var(--s)); height: calc(12px * var(--s)); pointer-events: none; z-index: 1; }
+.ceo-desk i { position: absolute; display: block; }
+.ceo-desk .dtop { left: 0; right: 0; top: 0; height: calc(3px * var(--s)); background: linear-gradient(#c58b52 0 34%, #a8703c 34% 80%, #7a4e28 80%); box-shadow: 0 0 0 2px var(--edge); }
+.ceo-desk .dleg { right: calc(1px * var(--s)); top: calc(3px * var(--s)); bottom: 0; width: calc(2px * var(--s)); background: #7a4e28; box-shadow: 0 0 0 2px var(--edge); }
+.ceo-desk .dped { left: calc(1px * var(--s)); top: calc(3px * var(--s)); bottom: 0; width: calc(11px * var(--s)); box-shadow: 0 0 0 2px var(--edge);
+  background: repeating-linear-gradient(#a8703c 0 calc(4px * var(--s) - 2px), #6b4424 calc(4px * var(--s) - 2px) calc(4px * var(--s))); }
+.ceo-desk .dped::before, .ceo-desk .dped::after { content: ""; position: absolute; left: calc(4px * var(--s)); top: calc(1.5px * var(--s)); width: calc(3px * var(--s)); height: calc(1px * var(--s)); background: #e3c48a; box-shadow: 0 0 0 1px #4a2f18; }
+.ceo-desk .dped::after { top: calc(5.5px * var(--s)); }
+.ceo-desk .laptop { right: calc(1px * var(--s)); bottom: 100%; width: calc(9px * var(--s)); height: calc(1px * var(--s)); background: #c9ced6; box-shadow: 0 0 0 1px #5d6772; }
+.ceo-desk .laptop::before { content: ""; position: absolute; left: 0; bottom: 100%; width: calc(1px * var(--s)); height: calc(7px * var(--s)); background: linear-gradient(90deg, #2a2f37 55%, #8fd3f4 55%);
+  box-shadow: 0 0 0 1px #5d6772; transform: skewX(10deg); transform-origin: bottom; }
+.ceo-desk .mugd { left: calc(4px * var(--s)); bottom: 100%; width: calc(3px * var(--s)); height: calc(3px * var(--s)); background: linear-gradient(#6b4a32 0 30%, #fff 30%); box-shadow: 0 0 0 1px #8b7a68; }
+.ceo-desk .mugd::after { content: ""; position: absolute; left: 100%; top: 25%; width: calc(1px * var(--s)); height: 40%; border: 1px solid #8b7a68; border-left: 0; }
 .ceo-line { position: absolute; inset: 0; pointer-events: none; }
 .qf { position: absolute; right: calc((var(--qr, 60) - 12) * 1px * var(--s)); bottom: calc(9px * var(--s)); border: 0; background: none; padding: 0; width: calc(24px * var(--s)); cursor: pointer;
   display: flex; flex-direction: column; align-items: center; pointer-events: auto; transition: right .4s steps(4); }
@@ -287,8 +293,6 @@ button { font: inherit; color: inherit; }
 @keyframes sparkle { 0% { opacity: 1; transform: scale(.3); } 100% { opacity: 0; transform: scale(1.6); } }
 @keyframes qout { 60% { opacity: 1; } 100% { opacity: 0; transform: translateY(6px); } }
 .qmore { position: absolute; right: calc((var(--qr, 120) - 6) * 1px * var(--s)); bottom: calc(12px * var(--s)); background: var(--ink); color: var(--bg); padding: 0 5px; font-size: 11px; font-weight: 700; }
-.ceo-empty { position: absolute; left: calc(4px * var(--s)); right: calc(56px * var(--s)); bottom: calc(12px * var(--s)); margin: 0; font-size: 11px; line-height: 15px; color: var(--ink);
-  background: var(--paper); padding: 3px 6px; box-shadow: var(--px-thin); }
 
 /* ---------- overview (전체 보기) ---------- */
 .overview { position: absolute; inset: 0; z-index: 10; background: var(--tx-brick) 0 0 / 32px; box-shadow: var(--px); padding: 10px 10px 10px; overflow: auto; }
@@ -433,6 +437,11 @@ button { font: inherit; color: inherit; }
 .card-pop dt { color: var(--muted); } .card-pop dd { margin: 0; min-width: 0; overflow-wrap: anywhere; } .card-pop small { color: var(--muted); }
 .card-pop .ask { margin: 8px 0; padding: 6px 8px; background: var(--cream); box-shadow: var(--px-thin); white-space: pre-wrap; max-height: 160px; overflow: auto; }
 .card-pop .btns { display: flex; gap: 6px; justify-content: flex-end; }
+/* the final report (Stop / SubagentStop): plain escaped text, line breaks kept, scrolls on its own */
+.card-pop .report-h { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin: 8px 0 4px; }
+.card-pop .report { margin: 0 0 8px; padding: 6px 8px; background: var(--cream); color: var(--ink); box-shadow: var(--px-thin); white-space: pre-wrap; overflow-wrap: anywhere;
+  line-height: 1.55; max-height: 240px; overflow: auto; overscroll-behavior: contain; }
+.card-pop .report:focus-visible { outline: 2px solid var(--fable); outline-offset: 1px; }
 .prio { font-size: 10.5px; padding: 0 5px; font-weight: 700; } .prio.high { background: var(--red); color: var(--red-ink); } .prio.low { background: var(--line); }
 .tip { position: fixed; left: 0; top: 0; z-index: 200; pointer-events: none; background: #1b1830; color: #fff3c4; padding: 3px 7px; font-size: 11.5px; max-width: 300px; box-shadow: var(--px-thin); }
 .toast { position: fixed; left: 50%; bottom: 64px; transform: translateX(-50%); z-index: 150; background: #1b1830; color: #fff3c4; padding: 6px 12px; box-shadow: var(--px); font-size: 12.5px; }
@@ -499,7 +508,6 @@ button { font: inherit; color: inherit; }
   .ceo-room.open .ceo-body { display: block; }
   .ceo-room .ceo-wall { display: none; }
   .ceo-room { --s: 2; }
-  .ceo-empty { left: 8px; right: 110px; }
   .stage-h { gap: 8px; } .slot { min-width: 40px; }
   .ov-list { padding-right: 0; } .ov-fl { grid-template-columns: 30px 80px 1fr; }
   .um-body { grid-template-columns: 1fr; }
