@@ -107,6 +107,9 @@ export function relayLive(el, r, now = Date.now()) {
 
 /** Viewer token the server put in index.html (<meta name="office-token">); sent on every dashboard-only call. */
 export const officeToken = () => (typeof document !== 'undefined' && document.querySelector('meta[name="office-token"]')?.content) || '';
+/** True when the page was served by an earlier server process than the one now streaming (`ready.boot`): its viewer
+ *  token is stale, so it must reload. Missing values (simulator, older server) never trigger a reload. */
+export const staleBoot = (pageBoot, readyBoot) => typeof pageBoot === 'string' && !!pageBoot && typeof readyBoot === 'string' && !!readyBoot && pageBoot !== readyBoot;
 export const officeHeaders = () => ({ 'Content-Type': 'application/json', 'X-Office-Token': officeToken() });
 
 async function send(r, decision, sim) {

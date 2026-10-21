@@ -37,3 +37,7 @@
 - A page left open across a server restart reloads itself for a fresh viewer token
 - "입력을 기다리고 있어요" (idle) is a short-lived 대기 중 card, no longer "답이 필요해요"
 - Server log says why a request was not relayed
+
+## 0.2.5 — 2026-10-21
+- Tests: closing the visible tab with a hidden one open releases only questions; `not relayed` log line (control characters masked); `staleBoot` reload rule
+- Docs: DESIGN-v2 relay hold rules and idle card; CLAUDE.md commands and gotchas

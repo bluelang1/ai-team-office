@@ -13,7 +13,7 @@ import { layoutFloors, mountBuilding, renderOverview, elevatorFx } from './build
 import { openFloorEditor } from './editor.js';
 import { ceoStep, ceoList, ceoResolve, ceoExpire, HIGH, dismissKey, visibleQueue, releasePlan, DismissStore, ceoSpots, reportText } from './ceo.js';
 import { Usage, bindTips, usageSummaryHTML, detailHTML } from './charts.js';
-import { applyFrame, sweep, resetRelay, mergeQueue, relayHTML, relayLive, onRelayClick, onRelayInput, decidedKey, keyOfRelay, releaseRelay, officeHeaders } from './ceocard.js';
+import { applyFrame, sweep, resetRelay, mergeQueue, relayHTML, relayLive, onRelayClick, onRelayInput, decidedKey, keyOfRelay, releaseRelay, officeHeaders, staleBoot } from './ceocard.js';
 import * as sim from './sim.js';
 
 const $ = id => document.getElementById(id);
@@ -140,7 +140,7 @@ function connect() {
     const info = safeJSON(m.data) || {};
     // The server restarted while this page stayed open: its viewer token is gone, so answers would be refused. Reload.
     const boot = document.querySelector('meta[name="office-boot"]')?.content;
-    if (!SIM && boot && typeof info.boot === 'string' && info.boot !== boot) { location.reload(); return; }
+    if (!SIM && staleBoot(boot, info.boot)) { location.reload(); return; }
     ui.mode = SIM ? '시뮬레이터' : info.mode === 'replay' ? '리플레이' : '실시간';
     if (info.redact) ui.mode += ' · 가림';
     if ('building' in info) serverBuilding = info.building && typeof info.building === 'object' ? info.building : null;

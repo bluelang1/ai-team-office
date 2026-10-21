@@ -24,7 +24,17 @@ HOME=$(mktemp -d) node server.mjs --port 4762       # scratch server, never touc
 open "http://127.0.0.1:4762/?sim=1&speed=20"        # simulator (fake data)
 # handy URL flags: ?sky=morning|day|evening|night  ?fx=star,couple  ?bye=1&day=YYYY-MM-DD
 claude plugin validate . && claude plugin validate plugins/ai-team
+curl -s http://127.0.0.1:4747/healthz | jq '{version,viewers,hiddenViewers,pending}'   # what is running + who can hold relay items
+jq -nc '{session_id:"0f1e2d3c-aaaa-bbbb-cccc-00000000beef",cwd:"/x/relay-test",hook_event_name:"PermissionRequest",tool_name:"Bash",tool_input:{command:"echo test"}}' \
+  | OFFICE_RELAY_WAIT_MS=300000 hooks/ceo-relay.sh   # fake approval card; prints the decision, runs nothing
+"<Chrome>" --headless=new --window-size=1400,300 --timeout=4000 --screenshot=out.png "http://127.0.0.1:4762/?sim=1"   # may hang: run in background, kill after ~10s
 ```
+
+## Gotchas
+- Swapping the server on 4747 (e.g. running repo code for a test) leaves open tabs disconnected for a while; relay requests in that window are not held. Check `~/.claude/ai-team-office/run/server.log` for `not relayed: <reason>`.
+- Claude Code sends `Notification idle_prompt` ~60s after every `Stop`; 대표실 logic must not let it overwrite the report card.
+- A session's event order is the ground truth: grep `~/.claude/logs/office-events.jsonl` for `"sid":"<8 chars>` before guessing at UI bugs.
+- Sessions started before a hook change keep the old hook until restarted (e.g. reports still cut at 300 chars).
 
 ## Rules
 - **Safety first** (it is installed on real machines):

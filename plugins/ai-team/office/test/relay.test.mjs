@@ -156,13 +156,15 @@ test('Relay.answer: 410 when the hook connection is gone (alive() false, or alre
 // The caller-process check would see THIS test process (often itself under a Claude Code session) as the caller, so
 // live servers get a fake process tree: a browser-like one by default, a Claude Code one where a test says so.
 const BROWSER_TREE = 'Google Chrome,launchd', AGENT_TREE = 'curl,zsh,claude,zsh,Terminal';
+/** port -> () => the server's stdout so far (its log lines). */
+const serverOut = new Map();
 function startServer(args, tree = BROWSER_TREE) {
   const p = spawn(process.execPath, [SERVER, '--port', '0', '--no-usage', ...args],
     { stdio: ['ignore', 'pipe', 'pipe'], env: { OFFICE_VIEWER_GRACE_MS: '300', ...process.env, OFFICE_TEST_ANCESTRY: tree } });
   procs.push(p);
   return new Promise((resolve, reject) => {
     let out = '';
-    p.stdout.on('data', b => { out += b; const m = /http:\/\/127\.0\.0\.1:(\d+)/.exec(out); if (m) resolve(Number(m[1])); });
+    p.stdout.on('data', b => { out += b; const m = /http:\/\/127\.0\.0\.1:(\d+)/.exec(out); if (m) { serverOut.set(Number(m[1]), () => out); resolve(Number(m[1])); } });
     p.on('exit', c => reject(new Error(`server exited ${c}: ${out}`)));
   });
 }
@@ -571,4 +573,34 @@ test('live: a reload (tab closes, a new one connects within the grace) keeps pen
   assert.equal((await answer(port, item.id, { behavior: 'allow' })).status, 200);
   assert.equal((await p).json.decision.behavior, 'allow');
   v2.close();
+});
+
+test('live: closing the only visible tab (hidden one remains) releases the question after the grace, keeps the permission', async () => {
+  const port = await startServer(['--logs', fs.mkdtempSync(path.join(tmp, 'close-'))]);
+  const ref = { Referer: `http://127.0.0.1:${port}/` };
+  const bg = await viewer(port, ref, '/events?vid=tab-bg-close-1&visible=0');
+  const fg = await viewer(port, ref, '/events?vid=tab-fg-close-1');
+  const p = ask(port, permInput(), 5000);
+  const { item } = await bg.waitFor(f => f.type === 'ask' && f.item.kind === 'permission');
+  const q = ask(port, askInput(), 5000);
+  const { item: qItem } = await bg.waitFor(f => f.type === 'ask' && f.item.kind === 'question');
+  fg.close();
+  assert.deepEqual((await q).json, { id: qItem.id, kind: 'question', decision: null, by: 'no-viewer' });
+  assert.match(serverOut.get(port)(), /last visible dashboard closed \(background tabs remain\), released 1 pending/);
+  assert.deepEqual((await pendingList(port)).json.map(x => x.id), [item.id], 'the permission still waits for the background tab');
+  assert.equal((await answer(port, item.id, { behavior: 'deny' })).status, 200);
+  assert.equal((await p).json.decision.behavior, 'deny');
+  bg.close();
+});
+
+test('live: a request nobody can hold is logged once with the reason (control characters masked)', async () => {
+  const port = await startServer(['--logs', fs.mkdtempSync(path.join(tmp, 'nolog-'))]);
+  assert.equal((await ask(port, permInput({ tool_name: 'Bash\n\u001b[31mX' }), 2000)).json.reason, 'no-viewer');
+  const bg = await viewer(port, { Referer: `http://127.0.0.1:${port}/` }, '/events?vid=tab-bg-log-1&visible=0');
+  assert.equal((await ask(port, askInput(), 2000)).json.reason, 'no-viewer');
+  const out = serverOut.get(port)();
+  assert.match(out, /대표실: Bash\?\?\[31mX \(0f1e2d3c\) not relayed: no dashboard open/);
+  assert.match(out, /대표실: AskUserQuestion \(0f1e2d3c\) not relayed: dashboard in the background/);
+  assert.ok(!out.includes('\u001b'), 'no raw escape reaches the log');
+  bg.close();
 });
