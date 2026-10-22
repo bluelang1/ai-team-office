@@ -39,12 +39,14 @@ Write `<ABS>` into settings as the expanded absolute path (as before), and tell 
 
 ### (a) "대표실 relay" (CEO-room relay)
 
-Explain: lets you answer permission requests and `AskUserQuestion` questions from the dashboard (with a hand-back button). It steps aside instantly when no dashboard tab is open, answers only from the dashboard (never on its own), and `OFFICE_RELAY_DISABLE=1` turns it off. Needs `curl` and a running dashboard (`/ai-team:office start`).
+Explain: lets you answer permission requests and `AskUserQuestion` questions from the dashboard (with a hand-back button). A held permission request does not block the terminal: its prompt shows there at the same time and whichever answers first wins, so it is held up to 9 minutes (540 s). A held question delays the terminal's question UI until the hook returns, so it is kept short (60 s here). It steps aside instantly when no dashboard tab is open, answers only from the dashboard (never on its own), and `OFFICE_RELAY_DISABLE=1` turns it off. Needs `curl` and a running dashboard (`/ai-team:office start`).
 
 Show and, on yes, merge these two hook entries (idempotent: skip any entry whose command already contains `ceo-relay.sh`, whatever its path; a versioned path is handled by the rewrite above), with `<ABS>` the path chosen above:
 
-- `hooks.PermissionRequest` += `{"matcher":"*","hooks":[{"type":"command","command":"OFFICE_RELAY_QUESTION_WAIT_MS=60000 \"<ABS>/office/hooks/ceo-relay.sh\"","timeout":180}]}`
-- `hooks.PreToolUse` += `{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"OFFICE_RELAY_QUESTION_WAIT_MS=60000 \"<ABS>/office/hooks/ceo-relay.sh\"","timeout":180}]}`
+- `hooks.PermissionRequest` += `{"matcher":"*","hooks":[{"type":"command","command":"OFFICE_RELAY_QUESTION_WAIT_MS=60000 \"<ABS>/office/hooks/ceo-relay.sh\"","timeout":600}]}`
+- `hooks.PreToolUse` += `{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"OFFICE_RELAY_QUESTION_WAIT_MS=60000 \"<ABS>/office/hooks/ceo-relay.sh\"","timeout":600}]}`
+
+The `timeout` must be at least the hook's wait / 1000 + 5 seconds (the permission default wait is 540000 → ≥ 545), otherwise Claude Code kills the hook first and a dashboard answer is refused (410). **Existing installs:** if a `ceo-relay.sh` entry already exists with a `timeout` below 545 (earlier versions wrote 180), show it and offer "Raise the timeout to 600 so approvals can wait the full 9 minutes? (yes/no)". On yes: back up first (as above, once per run), change only that `timeout` value in place, re-read and validate the JSON. On no, leave it: the hook then gives up after `timeout` seconds and the terminal prompt simply stays.
 
 ### (a2) "대표실 지시 보내기" (Stop relay, optional, after (a))
 

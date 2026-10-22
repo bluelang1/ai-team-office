@@ -627,7 +627,7 @@ async function relayAsk(req, res, url, asHook) {
     return none('no-viewer');
   }
   const alive = () => !res.destroyed && !res.writableEnded && !!res.socket && !res.socket.destroyed && res.socket.writable;
-  const r = relay.ask(raw, parseWait(url.searchParams.get('waitMs')), { alive });
+  const r = relay.ask(raw, parseWait(url.searchParams.get('waitMs'), holdKind(raw)), { alive });
   if (r.error) return asHook ? none(r.error) : sendJson(res, r.status, { error: r.error });
   if (r.none) return none(r.none);                       // e.g. a Stop whose report does not ask: no hold, no log
   res.on('close', () => { if (!res.writableFinished) relay.withdraw(r.id); });

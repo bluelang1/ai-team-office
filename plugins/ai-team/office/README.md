@@ -145,23 +145,23 @@ Claude Code 가 사람에게 묻는 두 가지 — 권한 확인(`PermissionRequ
 
 ### 설치 (사용자가 직접, `~/.claude/settings.json`)
 
-`<office>` 는 이 폴더의 절대 경로. 플러그인으로 설치했다면 버전이 들어간 캐시 폴더(`~/.claude/plugins/cache/…/<version>/`) 대신 마켓플레이스 체크아웃 `~/.claude/plugins/marketplaces/ai-team-office/plugins/ai-team/office` 를 쓴다 — `claude plugin marketplace update` 가 그 자리에서 갱신하므로 업데이트 뒤에도 새 훅이 돈다(`/ai-team:ai-team-setup` 이 이렇게 써 준다). 훅 `timeout`(초) 은 **대기 시간/1000 + 5 이상**이어야 한다 — 스크립트의 curl `--max-time` 이 그 값이라 더 짧으면 Claude Code 가 훅을 먼저 죽이고, 그 뒤 대표실 답은 410 으로 거절된다. 기본 `OFFICE_RELAY_WAIT_MS=120000`(2분) → max-time 125 → `timeout` ≥ 125(아래 예시 180), 최대 540000 → ≥ 545, 질문용 60000 → ≥ 65. `OFFICE_RELAY_WAIT_MS` 는 1~7자리 10진수만 받는다(`060000` = 60000, 앞 0 은 8진수가 아님; 그 외·더 긴 값은 기본값). 기존 `PermissionRequest`/`PreToolUse` 배열이 있으면 항목을 **추가**한다.
+`<office>` 는 이 폴더의 절대 경로. 플러그인으로 설치했다면 버전이 들어간 캐시 폴더(`~/.claude/plugins/cache/…/<version>/`) 대신 마켓플레이스 체크아웃 `~/.claude/plugins/marketplaces/ai-team-office/plugins/ai-team/office` 를 쓴다 — `claude plugin marketplace update` 가 그 자리에서 갱신하므로 업데이트 뒤에도 새 훅이 돈다(`/ai-team:ai-team-setup` 이 이렇게 써 준다). 훅 `timeout`(초) 은 **대기 시간/1000 + 5 이상**이어야 한다 — 스크립트의 curl `--max-time` 이 그 값이라 더 짧으면 Claude Code 가 훅을 먼저 죽이고, 그 뒤 대표실 답은 410 으로 거절된다. 권한 요청 기본 대기는 최대값 540000(9분) → max-time 545 → `timeout` ≥ 545(아래 예시 600), 질문 기본 120000 → ≥ 125, 설정 스킬이 쓰는 질문용 60000 → ≥ 65. **이전 설치(`timeout` 180)는 600 으로 올려야** 9분을 다 기다린다(`/ai-team:ai-team-setup` 이 올릴지 묻는다). 안 올리면 180초에 Claude Code 가 훅을 끝내고 카드는 "훅이 끝났어요" 로 닫힐 뿐, 잘못된 결정은 나가지 않는다. `OFFICE_RELAY_WAIT_MS` 는 1~7자리 10진수만 받는다(`060000` = 60000, 앞 0 은 8진수가 아님; 그 외·더 긴 값은 기본값). 기존 `PermissionRequest`/`PreToolUse` 배열이 있으면 항목을 **추가**한다.
 
 ```json
 {
   "hooks": {
     "PermissionRequest": [
-      { "matcher": "*", "hooks": [ { "type": "command", "command": "<office>/hooks/ceo-relay.sh", "timeout": 180 } ] }
+      { "matcher": "*", "hooks": [ { "type": "command", "command": "<office>/hooks/ceo-relay.sh", "timeout": 600 } ] }
     ],
     "PreToolUse": [
-      { "matcher": "AskUserQuestion", "hooks": [ { "type": "command", "command": "<office>/hooks/ceo-relay.sh", "timeout": 180 } ] }
+      { "matcher": "AskUserQuestion", "hooks": [ { "type": "command", "command": "<office>/hooks/ceo-relay.sh", "timeout": 600 } ] }
     ]
   }
 }
 ```
 
-- 필요: `bash`, `curl`, `jq` (node 기동 비용 없음). 환경변수: `OFFICE_PORT`(4747), `OFFICE_RELAY_WAIT_MS`(120000 = 2분, 최대 540000; 대시보드는 주로 지켜보는 곳이고 승인은 보조라 짧게 둔다), `OFFICE_RELAY_QUESTION_WAIT_MS`(질문만 따로, 기본은 앞 값), `OFFICE_RELAY_DISABLE=1`(끄기).
-- 대안: 공식 `http` 훅 — `{ "type": "http", "url": "http://127.0.0.1:4747/relay/hook?waitMs=120000", "timeout": 180 }`. 같은 롱폴이고 응답 본문이 곧 훅 JSON(결정 없으면 `{}`). 다만 서버가 꺼져 있으면 Claude Code 가 "non-blocking error" 로 처리(트랜스크립트에 훅 오류 표시)하므로 기본은 스크립트(접속 1초 실패 시 조용히 빠짐)다. `allowedHttpHookUrls` 를 쓰는 환경이면 이 URL 을 허용 목록에 넣어야 한다.
+- 필요: `bash`, `curl`, `jq` (node 기동 비용 없음). 환경변수: `OFFICE_PORT`(4747), `OFFICE_RELAY_WAIT_MS`(권한 요청, 기본 540000 = 최대: 터미널 승인 창이 훅과 **동시에** 떠 있어 붙잡아도 터미널을 막지 않는다 — 먼저 답한 쪽이 이긴다), `OFFICE_RELAY_QUESTION_WAIT_MS`(질문만 따로, 기본은 `OFFICE_RELAY_WAIT_MS` 를 정했으면 그 값, 아니면 120000: 질문은 아래처럼 터미널 질문 창을 늦추므로 짧게), `OFFICE_RELAY_DISABLE=1`(끄기).
+- 대안: 공식 `http` 훅 — `{ "type": "http", "url": "http://127.0.0.1:4747/relay/hook?waitMs=540000", "timeout": 600 }`. 같은 롱폴이고 응답 본문이 곧 훅 JSON(결정 없으면 `{}`). `AskUserQuestion` 훅에는 질문 UI 를 붙잡지 않도록 `waitMs=60000`~`120000` 을 쓴다. 다만 서버가 꺼져 있으면 Claude Code 가 "non-blocking error" 로 처리(트랜스크립트에 훅 오류 표시)하므로 기본은 스크립트(접속 1초 실패 시 조용히 빠짐)다. `allowedHttpHookUrls` 를 쓰는 환경이면 이 URL 을 허용 목록에 넣어야 한다.
 
 ### 경합 규칙 (먼저 답한 쪽이 이긴다)
 
@@ -169,13 +169,15 @@ Claude Code 가 사람에게 묻는 두 가지 — 권한 확인(`PermissionRequ
 |---|---|
 | 대표실에서 "터미널에서 답할게요" | 결정 없이 지금 풀기(`/relay/release`): 훅 빈 출력 → 터미널 프롬프트가 바로 뜬다. 카드는 남아 "터미널로 넘겼어요" 를 보이고 "터미널로" 로 그 탭을 앞으로. ("돌려보내기" 는 같은 풀기 + 대시보드에서 숨기기) |
 | 대표실에서 승인/거부/답변 | 훅이 결정 JSON 출력. 카드 `answered`(by dashboard). 두 번째 답은 409 |
-| 대기 시간 초과 | 훅 출력 없음 → 터미널 프롬프트. 카드 `resolved`(by terminal, reason timeout) |
+| 대기 시간 초과 | 훅 출력 없음 → 터미널 프롬프트(권한 요청은 처음부터 함께 떠 있음). 카드 `resolved`(by terminal, reason timeout) |
 | 터미널에서 먼저 답함 | Claude Code 가 훅을 끝내면 연결이 끊겨 `withdrawn`. 훅이 남아 있어도 같은 세션·같은 에이전트의 `PostToolUse`/`PostToolUseFailure`/`PermissionDenied`(같은 도구·같은 target, 질문은 같은 `tool_use_id`), 그 세션의 `UserPromptSubmit`/`SessionEnd`, 그 에이전트의 `Stop`/`SubagentStop` 이 office-events 에 찍히면 `resolved`(by terminal) 로 닫고 훅은 빈 출력 |
 | 대시보드 탭이 하나도 안 열려 있음 (질문은: 보이는 탭이 없음) | 즉시 "결정 없음"(`reason: no-viewer`) — 아무도 안 보는데 프롬프트를 붙잡지 않는다. "대시보드" = `Origin` 또는 `Referer` 가 이 서버 자신(loopback, 같은 포트)인 `/events` 연결(브라우저 EventSource 는 보내고 curl 은 안 보냄). **권한 요청**은 터미널 프롬프트가 훅과 동시에 떠 있으므로 백그라운드 탭이라도 열려 있으면 붙잡는다(터미널에서 일하다 나중에 대표실에서 승인 가능, 터미널에서 먼저 답해도 됨). **질문**(`PreToolUse`)은 훅이 끝나야 터미널 질문 창이 뜨므로 **보이는** 탭이 있을 때만 붙잡는다. 탭이 숨겨지면 페이지가 `POST /viewer {vid, visible:false}` 를 보낸다. 다른 SSE 리더는 대시보드로 세지 않는다. 넘긴 경우 서버 로그에 `not relayed: …` 한 줄을 남긴다 |
 | 마지막으로 보이던 탭이 백그라운드로 감 / 마지막 탭이 닫힘 | 백그라운드: 대기 중 **질문**만 `resolved`(no-viewer). 닫힘: 전부 `resolved`(no-viewer), 훅은 빈 출력 → 터미널 프롬프트. 닫힘은 5초 유예 뒤에 판단하므로 새로고침(닫혔다 바로 다시 연결)은 대기 항목을 풀지 않는다(`OFFICE_VIEWER_GRACE_MS`). 서버가 재시작되면 열린 페이지는 `ready.boot` 가 바뀐 것을 보고 새로고침해 새 토큰을 받는다(옛 토큰으로는 답이 403) |
 | 훅이 이미 끝났는데 대표실에서 답함 | 410 `the hook that asked is gone …` — 아무에게도 전달되지 않는 답을 성공으로 보이지 않는다 |
 
-**질문(AskUserQuestion)은 대기 중 터미널이 막힌다.** `PreToolUse` 훅은 도구 실행 *전*에 돌기 때문에, 훅이 기다리는 동안 터미널엔 질문 UI 가 아직 안 뜬다. 대기 시간이 지나야(또는 Esc 로 중단해야) 터미널에서 답할 수 있다. 그래서 `OFFICE_RELAY_QUESTION_WAIT_MS` 를 짧게(예: 60000) 두는 것을 권한다. 권한 확인 대화상자가 훅 대기 중에 함께 뜨는지는 문서에 명시가 없다 — 어느 쪽이든 위 규칙으로 정리된다.
+**권한 요청은 붙잡아도 터미널을 막지 않는다.** 터미널 승인 창이 훅과 동시에 뜨고, 터미널에서 먼저 답하면 훅 연결이 끊겨 카드가 `withdrawn` 으로 닫힌다(실사용 관찰, 공식 문서에는 명시 없음). 그래서 기본 대기를 최대(9분)로 둔다. 카드의 "터미널에서 답할게요" 는 대시보드 쪽 대기를 바로 끝낸다.
+
+**질문(AskUserQuestion)은 대기 중 터미널 질문 창이 늦게 뜬다.** `PreToolUse` 훅은 도구 실행 *전*에 돌기 때문에, 훅이 기다리는 동안 터미널엔 질문 UI 가 아직 안 뜬다. 대기 시간이 지나야(또는 Esc 로 중단하거나 카드의 "터미널에서 답할게요" 를 눌러야) 터미널에서 답할 수 있다. 그래서 질문은 기본 120000, 설정 스킬은 60000 으로 짧게 둔다. 입력 자체를 막는 것은 Stop 중계(아래)뿐이다.
 
 ### API
 

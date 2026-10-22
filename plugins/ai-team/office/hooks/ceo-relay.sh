@@ -3,8 +3,10 @@
 # server and waits for the dashboard. Prints a decision ONLY when the dashboard answered; in every other case
 # (server down, no dashboard open, timeout, error, OFFICE_RELAY_DISABLE=1) it prints nothing and exits 0, which
 # Claude Code treats as "no decision" -> the native terminal prompt applies.
-# Env: OFFICE_PORT (4747), OFFICE_RELAY_WAIT_MS (120000; 100..540000), OFFICE_RELAY_QUESTION_WAIT_MS (defaults to
-#      OFFICE_RELAY_WAIT_MS), OFFICE_RELAY_DISABLE=1 (no-op).
+# Env: OFFICE_PORT (4747), OFFICE_RELAY_WAIT_MS (permission: 540000 = the max; the terminal prompt shows alongside,
+#      so holding never blocks it — first answer wins; 100..540000), OFFICE_RELAY_QUESTION_WAIT_MS (question: defaults
+#      to OFFICE_RELAY_WAIT_MS if set, else 120000 — a held question delays the terminal question UI until the hook
+#      returns), OFFICE_RELAY_DISABLE=1 (no-op). The hook `timeout` must be >= wait/1000 + 5 (setup writes 600).
 # The JSON printed is built here from narrow fields (behavior, message, answers) — the server cannot make this
 # script rewrite tool input or add permission rules. Questions are echoed back from Claude Code's own stdin.
 set -u
@@ -15,15 +17,16 @@ input=$(cat) || exit 0
 ev=$(jq -r '.hook_event_name // ""' <<<"$input" 2>/dev/null) || exit 0
 tool=$(jq -r '.tool_name // ""' <<<"$input" 2>/dev/null) || exit 0
 
-wait_ms=${OFFICE_RELAY_WAIT_MS:-120000}
+default_ms=540000
+wait_ms=${OFFICE_RELAY_WAIT_MS:-540000}
 case "$ev" in
   PermissionRequest) ;;
-  PreToolUse) [ "$tool" = "AskUserQuestion" ] || exit 0; wait_ms=${OFFICE_RELAY_QUESTION_WAIT_MS:-$wait_ms} ;;
+  PreToolUse) [ "$tool" = "AskUserQuestion" ] || exit 0; default_ms=120000; wait_ms=${OFFICE_RELAY_QUESTION_WAIT_MS:-${OFFICE_RELAY_WAIT_MS:-120000}} ;;
   *) exit 0 ;;
 esac
 # 1..7 decimal digits only (else the default), read as base 10 (`060000` is 60000, `0800` is 800 — never octal),
 # then clamped; nothing longer reaches arithmetic, so no overflow. curl gets wait/1000 + 5 seconds.
-if [[ "$wait_ms" =~ ^[0-9]{1,7}$ ]]; then wait_ms=$((10#$wait_ms)); else wait_ms=120000; fi
+if [[ "$wait_ms" =~ ^[0-9]{1,7}$ ]]; then wait_ms=$((10#$wait_ms)); else wait_ms=$default_ms; fi
 (( wait_ms < 100 )) && wait_ms=100
 (( wait_ms > 540000 )) && wait_ms=540000
 port=${OFFICE_PORT:-4747}

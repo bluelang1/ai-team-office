@@ -876,9 +876,9 @@ function renderPop() {
   }
 }
 /** Text fields whose typing must survive a repaint: the deny reason and the instruction box. */
-const TYPING = '.why, .ins';
+const TYPING = '.why, .ins, .qother';
 const typingIn = el => { const a = document.activeElement; return !!a && el.contains(a) && a.matches(TYPING); };
-const inputState = () => { const a = document.activeElement; return { cls: a.classList.contains('ins') ? '.ins' : '.why', v: a.value, s: a.selectionStart, e: a.selectionEnd }; };
+const inputState = () => { const a = document.activeElement; return { cls: a.classList.contains('qother') ? `.qother[data-q="${Number(a.dataset.q)}"]` : a.classList.contains('ins') ? '.ins' : '.why', v: a.value, s: a.selectionStart, e: a.selectionEnd }; };
 function restoreInput(el, c) {
   const n = c && el.querySelector(c.cls);
   if (!n || n.disabled) return;
@@ -952,8 +952,9 @@ function bindCardInputs(el, relayOf) {
   el.addEventListener('input', ev => onRelayInput(ev, relayOf(), rerenderCards));
   el.addEventListener('change', ev => { if (ev.target.type === 'checkbox' && ev.target.dataset.q != null) onRelayInput(ev, relayOf(), rerenderCards); });
   el.addEventListener('keydown', ev => {
-    if (ev.key !== 'Enter') return;
+    if (ev.key !== 'Enter' || ev.isComposing || ev.keyCode === 229) return;   // Korean IME: the Enter that ends a syllable is not a send
     if (ev.target.classList.contains('why')) ev.target.closest('.deny')?.querySelector('[data-a="deny"]')?.click();
+    else if (ev.target.classList.contains('qother')) { ev.preventDefault(); ev.target.closest('.rl')?.querySelector('[data-a="send"]')?.click(); }
     // instruction box: Enter = new line; Ctrl/⌘+Enter = 보내기 (same button, same double-submit guard)
     else if (ev.target.classList.contains('ins') && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); ev.target.closest('.rl')?.querySelector('[data-a="instruct"]')?.click(); }
   });

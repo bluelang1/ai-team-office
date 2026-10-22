@@ -108,7 +108,20 @@ export function mergeQueue(list) {
   return [...byKey.values()].sort((a, b) => a.since - b.since || (a.key < b.key ? -1 : 1));
 }
 
-const draftOf = id => { let d = drafts.get(id); if (!d) { d = { sel: {}, deny: false, why: '', text: '', note: '' }; drafts.set(id, d); } return d; };
+const draftOf = id => { let d = drafts.get(id); if (!d) { d = { sel: {}, other: {}, deny: false, why: '', text: '', note: '' }; drafts.set(id, d); } return d; };
+export const OTHER_MAX = 500;
+/** A typed answer ("직접 입력", like Claude Code's Other): control characters -> space, trimmed, 500 characters — the
+ *  same cleanup the server (validateDecision) and hooks/ceo-relay.sh apply again. */
+export const cleanOther = v => Array.from(String(v ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ').trim()).slice(0, OTHER_MAX).join('');
+/** One question's answer from the draft: the typed text when there is any (it wins over a picked option), else the
+ *  pick (single) / the ticked labels (multi). undefined = unanswered. */
+export function answerOf(q, i, d) {
+  const typed = cleanOther(d.other?.[i]);
+  if (typed) return typed;
+  if (q.multiSelect) return d.sel[i]?.size ? [...d.sel[i]] : undefined;
+  return d.sel[i] || undefined;
+}
+const readyAll = (qs, d) => qs.length > 0 && qs.every((q, i) => answerOf(q, i, d) !== undefined);
 const fmtLeft = ms => { const s = Math.max(0, Math.round(ms / 1000)); return `${Math.floor(s / 60)}분 ${String(s % 60).padStart(2, '0')}초`; };
 
 /** Static answer section (live countdown is filled by relayLive). */
@@ -137,14 +150,15 @@ export function relayHTML(r) {
       <p class="rl-left">이번 한 번만 적용돼요</p>${status}${note}</div>`;
   }
   const qs = Array.isArray(it.questions) ? it.questions : [];
-  const quick = qs.length === 1 && !qs[0].multiSelect;
-  const ready = qs.every((q, i) => (q.multiSelect ? d.sel[i]?.size : d.sel[i]));
+  const quick = qs.length === 1 && !qs[0].multiSelect;   // one single-select question: a pick sends at once
+  const ready = readyAll(qs, d), typed = qs.some((q, i) => cleanOther(d.other[i]));
   return `<div class="rl">${qs.map((q, i) => `<fieldset class="rq"><legend>${q.header ? `<span class="hchip">${esc(q.header)}</span>` : ''}${esc(q.question)}${
     q.multiSelect ? ' <small>(여러 개 고를 수 있어요)</small>' : ''}</legend><div class="opts">${q.options.map(o => q.multiSelect
       ? `<label class="opt" title="${esc(o.description)}"><input type="checkbox" data-q="${i}" value="${esc(o.label)}" ${d.sel[i]?.has(o.label) ? 'checked' : ''} ${dis}><span>${esc(o.label)}</span></label>`
       : `<button type="button" class="opt" data-a="pick" ${rid} data-q="${i}" data-v="${esc(o.label)}" aria-pressed="${d.sel[i] === o.label}" title="${esc(o.description)}" ${dis}>${esc(o.label)}${
-        o.description ? `<small>${esc(o.description)}</small>` : ''}</button>`).join('')}</div></fieldset>`).join('')}
-    <div class="btns">${quick ? '' : `<button type="button" class="chipbtn primary" data-a="send" ${rid} ${ready && !dis ? '' : 'disabled'}>확인 · 답 보내기</button>`}${handoff('터미널에서 답할게요')}</div>
+        o.description ? `<small>${esc(o.description)}</small>` : ''}</button>`).join('')}</div>
+      <input class="qother" type="text" data-q="${i}" maxlength="${OTHER_MAX}" aria-label="직접 입력: ${esc(q.question)}" placeholder="직접 입력 (보기 대신 이 글로 답해요)" value="${esc(d.other[i] || '')}" ${dis}></fieldset>`).join('')}
+    <div class="btns"><button type="button" class="chipbtn primary" data-a="send" ${rid} ${ready && !dis ? '' : 'disabled'} ${quick && !typed ? 'hidden' : ''}>확인 · 답 보내기</button>${handoff('터미널에서 답할게요')}</div>
     <p class="rl-left">남은 대기 <span class="live-left pill"></span></p>${status}${note}</div>`;
 }
 export function relayLive(el, r, now = Date.now()) {
@@ -206,8 +220,8 @@ export function onRelayClick(ev, r, rerender, sim) {
     case 'allow': return go({ behavior: 'allow' });
     case 'deny-open': d.deny = !d.deny; rerender(); return true;
     case 'deny': { const why = d.why.trim(); return go(why ? { behavior: 'deny', message: why } : { behavior: 'deny' }); }
-    case 'pick': {
-      const i = Number(b.dataset.q); d.sel[i] = b.dataset.v;
+    case 'pick': {                                        // an explicit pick clears that question's typed answer
+      const i = Number(b.dataset.q); d.sel[i] = b.dataset.v; d.other[i] = '';
       const qs = it.questions || [];
       if (qs.length === 1 && !qs[0].multiSelect) return go({ answers: { [qs[0].question]: d.sel[0] } });
       rerender(); return true;
@@ -216,8 +230,10 @@ export function onRelayClick(ev, r, rerender, sim) {
     case 'instruct': { const text = d.text.trim(); if (!text) return true; return go({ text: Array.from(text).slice(0, INSTRUCT_MAX).join('') }); }
     case 'handoff': { const p = releaseRelay(r, sim).then(() => rerender({ focus: '[data-a="focus"]' })); rerender(); return p; }
     case 'send': {
+      const qs = it.questions || [];
+      if (!readyAll(qs, d)) return true;
       const answers = {};
-      (it.questions || []).forEach((q, i) => { answers[q.question] = q.multiSelect ? [...(d.sel[i] || [])] : d.sel[i]; });
+      qs.forEach((q, i) => { answers[q.question] = answerOf(q, i, d); });
       return go({ answers });
     }
     default: return false;
@@ -232,6 +248,12 @@ export function onRelayInput(ev, r, rerender) {
     const had = !!d.text.trim(); d.text = ev.target.value;
     const btn = ev.target.closest('.rl')?.querySelector('[data-a="instruct"]');
     if (btn && had !== !!d.text.trim()) btn.disabled = !d.text.trim();
+    return;
+  }
+  if (ev.target.classList.contains('qother')) {            // typed answer: no re-render; the send button follows
+    d.other[Number(ev.target.dataset.q)] = ev.target.value;
+    const btn = ev.target.closest('.rl')?.querySelector('[data-a="send"]');
+    if (btn) { const qs = r.item.questions || []; btn.disabled = !readyAll(qs, d); if (qs.length === 1 && !qs[0].multiSelect) btn.hidden = !cleanOther(d.other[0]); }
     return;
   }
   if (ev.target.type === 'checkbox') {

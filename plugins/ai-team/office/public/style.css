@@ -641,3 +641,7 @@ label.opt { flex-direction: row; align-items: center; gap: 5px; } .opt:disabled,
 /* 터미널에서 답할게요 (hand the prompt to the terminal now; the card stays) vs 돌려보내기 (ghost: hide from the dashboard) */
 .chipbtn.term { background: var(--card); color: var(--opus); box-shadow: inset 0 0 0 2px var(--opus), 3px 3px 0 0 var(--hard); font-weight: 700; }
 .chipbtn.term:hover { background: color-mix(in srgb, var(--opus) 14%, var(--card)); }
+/* 직접 입력 (free-text answer) under each question's options */
+.rq .qother { width: 100%; margin-top: 4px; font: inherit; font-size: 12px; padding: 3px 6px; border: 0; background: var(--card); color: var(--ink); box-shadow: inset 0 0 0 2px var(--line); }
+.rq .qother:focus-visible { outline: 2px solid var(--fable); outline-offset: 1px; }
+.reader .rq .qother { font-size: var(--rd-fs); }

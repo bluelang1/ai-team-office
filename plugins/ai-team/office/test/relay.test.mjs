@@ -8,6 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
+import { QUESTION_WAIT_DEFAULT, STOP_WAIT_DEFAULT } from '../relay.mjs';
 import { Relay, parseWait, classifyInput, validateDecision, hookOutput, targetOf, cleanText, WAIT_DEFAULT, WAIT_MAX,
   checkCaller, parseLsof, fakeAncestryRunner, cleanInstruction, INSTRUCT_MAX, INSTRUCT_CAP, STOP_WAIT_MAX } from '../relay.mjs';
 import { testAncestry } from '../server.mjs';
@@ -392,7 +393,7 @@ test('ceo-relay.sh: answered via curl -> exact hook JSON; timeout / server down 
     updatedInput: { questions: QUESTIONS, answers: { 'Which framework?': 'React', 'Which extras?': 'ESLint' } } } });
 
   // OFFICE_RELAY_WAIT_MS parsing: leading zeros are decimal (never octal), > 7 digits -> default; curl gets wait/1000+5 s.
-  for (const [val, want] of [['060000', 60000], ['0800', 800], ['12345678901234567890', 120000]]) {
+  for (const [val, want] of [['060000', 60000], ['0800', 800], ['12345678901234567890', 540000]]) {
     const hr = runHook(permInput(), { OFFICE_PORT: String(port), OFFICE_RELAY_WAIT_MS: val, OFFICE_RELAY_DEBUG: '1' });
     const g = await v.waitFor(x => x.type === 'ask' && !v.ceo.some(y => y.id === x.item.id && y.type !== 'ask'));
     assert.equal(g.item.expiresAt - g.item.createdAt, want, val);
@@ -818,7 +819,7 @@ test('endings without a decision: expiry is logged with its wait, kept for the s
 });
 
 test('dashboard instructions: at most 8 in a row per session (reset by a typed prompt / SessionEnd); Stop wait ≤ 320 s', async () => {
-  assert.equal(INSTRUCT_CAP, 8); assert.equal(STOP_WAIT_MAX, 320000); assert.equal(WAIT_DEFAULT, 120000);
+  assert.equal(INSTRUCT_CAP, 8); assert.equal(STOP_WAIT_MAX, 320000); assert.equal(WAIT_DEFAULT, 540000);
   const frames = [];
   const r = new Relay({ broadcast: f => frames.push(f) });
   const a0 = r.ask(stopInput(), 540000);
@@ -862,4 +863,26 @@ test('OFFICE_TEST_ANCESTRY is honoured only under the test runner; a real start 
   if (process.env.CLAUDECODE || /claude/i.test(String(process.env._ || ''))) assert.equal(res.status, 403, 'under Claude Code the real check refuses this test process');
   else assert.ok([200, 403].includes(res.status));
   await pr; v.close(); p.kill();
+});
+
+test('waits: a permission prompt (terminal prompt shows alongside) is held up to 540 s by default; questions and Stop stay 120 s', async () => {
+  assert.deepEqual([WAIT_DEFAULT, QUESTION_WAIT_DEFAULT, STOP_WAIT_DEFAULT], [540000, 120000, 120000]);
+  assert.equal(parseWait(null, 'permission'), 540000); assert.equal(parseWait('', 'question'), 120000); assert.equal(parseWait('x', 'instruct'), 120000);
+  assert.equal(parseWait('60000', 'question'), 60000, 'an explicit wait wins');
+  const dbg = async (input, env) => (await runHook(input, { OFFICE_PORT: '9', OFFICE_RELAY_DEBUG: '1', ...env })).err;
+  const clean = { OFFICE_RELAY_WAIT_MS: '', OFFICE_RELAY_QUESTION_WAIT_MS: '' };
+  const strip = e => { const o = { ...e }; for (const k of Object.keys(clean)) if (!o[k]) delete o[k]; return o; };
+  const base = { ...process.env }; delete base.OFFICE_RELAY_WAIT_MS; delete base.OFFICE_RELAY_QUESTION_WAIT_MS;
+  const run = (input, env = {}) => new Promise(resolve => {
+    const p = spawn('bash', [HOOK], { env: { ...base, OFFICE_PORT: '9', OFFICE_RELAY_DEBUG: '1', ...strip(env) }, stdio: ['pipe', 'pipe', 'pipe'] });
+    let err = ''; p.stderr.on('data', b => { err += b; }); p.on('close', () => resolve(err)); p.stdin.end(JSON.stringify(input));
+  });
+  assert.match(await run(permInput()), /wait_ms=540000 max_time=545\b/, 'permission default = max (hook timeout must be >= 545: setup writes 600)');
+  assert.match(await run(askInput()), /wait_ms=120000 max_time=125\b/, 'question default stays short (its terminal UI waits for the hook)');
+  assert.match(await run(askInput(), { OFFICE_RELAY_WAIT_MS: '90000' }), /wait_ms=90000\b/, 'question follows OFFICE_RELAY_WAIT_MS when set');
+  assert.match(await run(askInput(), { OFFICE_RELAY_WAIT_MS: '90000', OFFICE_RELAY_QUESTION_WAIT_MS: '60000' }), /wait_ms=60000\b/);
+  void dbg;
+  const skill = fs.readFileSync(fileURLToPath(new URL('../../skills/ai-team-setup/SKILL.md', import.meta.url)), 'utf8');
+  assert.equal((skill.match(/ceo-relay\.sh\\\\?"","timeout":600\}/g) || []).length, 2, 'setup writes timeout 600 for both relay hooks');
+  assert.match(skill, /Raise the timeout to 600/, 'and offers to raise an old 180');
 });

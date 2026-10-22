@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ceoStep, ceoList, ceoExpire, reportAsks, reportDecision, reportBlocks, reportText, linkParts, readerSame, ASK_MAX_MS, LOW, HIGH,
   ceoTable, nextSort, rowKind, rowText, ceoMore, ceoGroupPlan, groupTip, groupEntry, ceoSpots, pruneSel, selectRows, selectRange, selState, selHigh, selHidden, selEntries, dismissKey } from '../public/ceo.js';
-import { onRelayClick, onRelayInput, relayHTML, applyFrame, resetRelay, relay, mergeQueue, INSTRUCT_CHIPS, whyNoButtons, instructOff } from '../public/ceocard.js';
+import { onRelayClick, onRelayInput, relayHTML, applyFrame, resetRelay, relay, mergeQueue, INSTRUCT_CHIPS, whyNoButtons, instructOff, answerOf, cleanOther, OTHER_MAX } from '../public/ceocard.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const pub = f => fs.readFileSync(path.join(here, '..', 'public', f), 'utf8');
@@ -287,7 +287,7 @@ test('instruct UI wiring: report card shows the box or an honest muted line; Ctr
   assert.match(app, /\$\{esc\(instructOff\(q, relayState\)\)\}/, 'the card uses instructOff (escaped)');
   assert.match(app, /q\.kind === 'report' && q\.asks && q\.relay\?\.item\?\.kind !== 'instruct'/, 'the muted line only when no instruct item is attached');
   assert.match(app, /ev\.target\.classList\.contains\('ins'\) && \(ev\.ctrlKey \|\| ev\.metaKey\)/, 'Ctrl/⌘+Enter = 보내기; plain Enter is a new line');
-  assert.match(app, /const TYPING = '\.why, \.ins';/);
+  assert.match(app, /const TYPING = '\.why, \.ins, \.qother';/);
   assert.match(app, /el\._h !== html && !\(typingIn\(el\) && el\._st === st\)/, 'small card: no repaint under typing unless the relay status changed');
 });
 
@@ -380,4 +380,49 @@ test('instructOff: why an asking report has no box (cap / unchecked / timeout / 
   assert.match(instructOff(q, st('released')), /터미널로 넘겼어요/);
   assert.equal(instructOff(q, { ends: [], seenInstruct: false }), '대시보드 지시는 설치 후 쓸 수 있어요 · 터미널로');
   assert.match(instructOff(q, { ends: [{ sid: 'S', tool: 'Stop', reason: 'cap', at: T - 5000 }], seenInstruct: true }), /받을 수 없어요/, 'an older report\'s cap does not apply');
+});
+
+test('직접 입력: a typed answer per question (like Other) wins over options, is cleaned and capped, same guards', async () => {
+  resetRelay();
+  const Q = [{ question: '범위?', header: '범위', multiSelect: false, options: [{ label: '30일', description: '' }, { label: '90일', description: '' }] },
+    { question: '검증?', header: '', multiSelect: true, options: [{ label: '단위', description: '' }, { label: '리허설', description: '' }] }];
+  applyFrame({ type: 'ask', item: { id: 'q9', kind: 'question', sid: 'S', aid: 'a', tool: 'AskUserQuestion', createdAt: 1, expiresAt: 2, questions: Q } });
+  const r = relay.items.get('q9');
+  let html = relayHTML(r);
+  assert.equal((html.match(/<input class="qother" type="text" data-q="\d"/g) || []).length, 2, 'one field per question');
+  assert.match(html, /maxlength="500"/); assert.match(html, /data-a="send" data-rid="q9" disabled/);
+  assert.equal(cleanOther('  a\nb\u0007c  '), 'a b c'); assert.equal(Array.from(cleanOther('가'.repeat(900))).length, OTHER_MAX);
+  const input = (q, value) => ({ target: { classList: { contains: c => c === 'qother' }, dataset: { q: String(q) }, value, closest: () => null } });
+  onRelayInput(input(0, '  60일\t로 해 주세요 '), r, () => assert.fail('no re-render while typing'));
+  const d0 = { sel: {}, other: { 0: '  60일\t로 해 주세요 ' } };
+  assert.equal(answerOf(Q[0], 0, d0), '60일 로 해 주세요');
+  assert.equal(answerOf(Q[1], 1, { sel: { 1: new Set(['단위']) }, other: {} }).join(), '단위');
+  assert.equal(answerOf(Q[1], 1, { sel: { 1: new Set(['단위']) }, other: { 1: '전부' } }), '전부', 'typed wins over ticked options (multi too)');
+  assert.equal(answerOf(Q[0], 0, { sel: {}, other: { 0: ' \u0001 ' } }), undefined, 'blank after cleanup = unanswered');
+  html = relayHTML(r);
+  assert.match(html, /value="  60일\t로 해 주세요 "/, 'the draft is kept (escaped) across repaints');
+  const ev = (a, rid, extra = {}) => { const b = { dataset: { a, rid, ...extra }, disabled: false }; return { target: { closest: () => b } }; };
+  assert.equal(onRelayClick(ev('send', 'q9'), r, () => {}, true), true); assert.equal(r.status, 'pending', 'not sent while question 2 is unanswered');
+  onRelayInput(input(1, '<b>"전부"</b>'), r, () => {});
+  assert.match(relayHTML(r), /value="&lt;b&gt;&quot;전부&quot;&lt;\/b&gt;"/, 'escaped');
+  assert.equal(onRelayClick(ev('send', 'stale'), r, () => {}, true), true); assert.equal(r.status, 'pending', 'stale rid refused');
+  const p = onRelayClick(ev('send', 'q9'), r, () => {}, true);
+  assert.ok(p && typeof p.then === 'function'); assert.equal(r.status, 'sending');
+  assert.equal(onRelayClick(ev('send', 'q9'), r, () => {}, true), true, 'double Enter refused while sending');
+  await p;
+  resetRelay();
+  // one single-select question: picking sends at once; typing shows the send button and clears on a pick
+  applyFrame({ type: 'ask', item: { id: 'q1', kind: 'question', sid: 'S', tool: 'AskUserQuestion', createdAt: 1, expiresAt: 2, questions: [Q[0]] } });
+  const r1 = relay.items.get('q1');
+  assert.match(relayHTML(r1), /data-a="send" data-rid="q1" disabled hidden/, 'quick card: send hidden until something is typed');
+  onRelayInput(input(0, '120일'), r1, () => {});
+  assert.match(relayHTML(r1), /data-a="send" data-rid="q1"  >/, 'typed: send visible and enabled');
+  resetRelay();
+});
+
+test('validateDecision accepts a typed answer for any question (single or multi), cleaned to 500', async () => {
+  const { validateDecision } = await import('../relay.mjs');
+  const item = { kind: 'question', questions: [{ question: 'A?', multiSelect: false }, { question: 'B?', multiSelect: true }] };
+  assert.deepEqual(validateDecision(item, { answers: { 'A?': ' 직접\n입력 ', 'B?': '전부 다' } }).value, { answers: { 'A?': '직접 입력', 'B?': '전부 다' } });
+  assert.equal(Array.from(validateDecision(item, { answers: { 'A?': 'x'.repeat(900), 'B?': ['y'] } }).value.answers['A?']).length, 500);
 });

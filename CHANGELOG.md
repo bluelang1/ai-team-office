@@ -66,3 +66,10 @@
 - Relay default wait 170s → 120s; Stop wait capped at 320s
 - Session grouping (×N) only when the 대표실 overflows; hover needs a 150ms rest to switch people, the open card wins
 - Fix: 전체 보기 no longer draws a cut-off 대표실; `OFFICE_TEST_ANCESTRY` only honoured under `node --test`
+
+## 0.2.10 — 2026-10-22
+- Relay waits: permission prompts are held up to 540 s (9 min) by default — the terminal prompt shows alongside and the first answer wins, so holding never blocks it. Questions stay at 120 s (their terminal UI waits for the hook) and the Stop instruction box at 120 s (max 320 s; it blocks that session's input)
+- Setup writes relay hook `timeout` 600 (≥ 545 needed) and offers to raise an existing 180
+- Question cards: **직접 입력** free-text answer per question (like Claude Code's Other), cleaned and capped at 500 like the hook; works in the card and the drawer
+- Docs: README (EN/KO) covers the 0.2.9/0.2.10 대표실 features, how each relay wait works, and upgrade steps
+- **Upgrading to 0.2.10:** run `/ai-team:ai-team-setup` again to raise the relay hook `timeout` to 600 and (optionally) add the Stop hook for the instruction box, then restart your Claude Code sessions (running sessions keep their old hooks)

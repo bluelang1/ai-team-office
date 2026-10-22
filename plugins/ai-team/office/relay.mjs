@@ -10,7 +10,9 @@ import crypto from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { reportAsks } from './public/ceo.js';   // one implementation of "does the report ask?" (dashboard + relay)
 
-export const WAIT_DEFAULT = 120000, WAIT_MIN = 100, WAIT_MAX = 540000;
+/** Default holds (when the hook sends no waitMs). A permission prompt shows in the terminal alongside the hook (first
+ *  answer wins), so it is held as long as allowed; a question's terminal UI waits for the hook, so it stays short. */
+export const WAIT_DEFAULT = 540000, QUESTION_WAIT_DEFAULT = 120000, STOP_WAIT_DEFAULT = 120000, WAIT_MIN = 100, WAIT_MAX = 540000;
 /** Stop (instruct) waits at most 320 s: ceo-stop.sh's curl gets wait + 5 s, which must stay under the hook timeout
  *  the setup writes (330 s). INSTRUCT_CAP: Claude Code ends the turn after 8 stop-hook continuations in a row, so the
  *  dashboard offers at most 8 instructions per session until the human types a prompt (or the session ends). */
@@ -22,10 +24,11 @@ export const END_REASONS = new Set(['timeout', 'no-viewer', 'hidden', 'withdrawn
 const SID = /^[A-Za-z0-9_-]{1,128}$/;
 const CTRL_G = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g;
 
-/** waitMs query value -> integer in [WAIT_MIN, WAIT_MAX]; missing/garbage -> WAIT_DEFAULT. */
-export function parseWait(v) {
+/** waitMs query value -> integer in [WAIT_MIN, WAIT_MAX]; missing/garbage -> the default for `kind`
+ *  (permission WAIT_DEFAULT, question QUESTION_WAIT_DEFAULT, instruct STOP_WAIT_DEFAULT). */
+export function parseWait(v, kind = 'permission') {
   const n = Number(v);
-  if (v == null || v === '' || !Number.isFinite(n)) return WAIT_DEFAULT;
+  if (v == null || v === '' || !Number.isFinite(n)) return kind === 'question' ? QUESTION_WAIT_DEFAULT : kind === 'instruct' ? STOP_WAIT_DEFAULT : WAIT_DEFAULT;
   return Math.min(WAIT_MAX, Math.max(WAIT_MIN, Math.round(n)));
 }
 
