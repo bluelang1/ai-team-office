@@ -37,6 +37,11 @@ jq -nc '{session_id:"0f1e2d3c-aaaa-bbbb-cccc-00000000beef",cwd:"/x/relay-test",h
 - Claude Code sends `Notification idle_prompt` ~60s after every `Stop`; 대표실 logic must not let it overwrite the report card.
 - A session's event order is the ground truth: grep `~/.claude/logs/office-events.jsonl` for `"sid":"<8 chars>` before guessing at UI bugs.
 - Sessions started before a hook change keep the old hook until restarted (e.g. reports still cut at 300 chars).
+- Relay holds differ: PermissionRequest does NOT block the terminal (dialog shows too, first answer wins → 540s default); PreToolUse(AskUserQuestion) and Stop DO block (question UI / input) → keep them short (120s).
+- A Stop-hook instruction shows in the terminal as "Stop hook blocking error … : <text>"; that is the normal label, not a failure.
+- Browsers launched from Claude Code are refused by the relay's process-tree guard; `OFFICE_TEST_ANCESTRY` only works under `node --test`, never on a real server.
+- `--headless --screenshot` fires before the sim plays (empty 대표실); for interactive shots drive Chrome over CDP.
+- Enter-to-send handlers must skip `ev.isComposing || ev.keyCode === 229` (Korean IME ends a syllable with Enter).
 
 ## Rules
 - **Safety first** (it is installed on real machines):
