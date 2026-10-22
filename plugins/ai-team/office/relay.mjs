@@ -91,13 +91,23 @@ export function classifyInput(raw) {
   }
   if (typeof raw.tool_name !== 'string' || !raw.tool_name || raw.tool_name.length > 200) return { error: 'bad tool_name' };
   if (raw.tool_input != null && (typeof raw.tool_input !== 'object' || Array.isArray(raw.tool_input))) return { error: 'bad tool_input' };
-  if (raw.hook_event_name === 'PermissionRequest') return { kind: 'permission' };
-  if (raw.hook_event_name === 'PreToolUse' && raw.tool_name === 'AskUserQuestion') {
+  const questionsOk = () => {
     const qs = raw.tool_input && raw.tool_input.questions;
     if (!Array.isArray(qs) || !qs.length || qs.length > 10 || !qs.every(q => q && typeof q.question === 'string' && q.question))
-      return { error: 'AskUserQuestion needs tool_input.questions[] with question text' };
-    if (new Set(qs.map(q => q.question)).size !== qs.length) return { error: 'duplicate question text' };
-    return { kind: 'question' };
+      return 'AskUserQuestion needs tool_input.questions[] with question text';
+    if (new Set(qs.map(q => q.question)).size !== qs.length) return 'duplicate question text';
+    return null;
+  };
+  // A permission prompt FOR AskUserQuestion (e.g. bypassPermissions, or after the PreToolUse hold timed out) is a
+  // question: allowing it without answers does nothing useful, so it is answered with the answers (updatedInput).
+  if (raw.hook_event_name === 'PermissionRequest' && raw.tool_name === 'AskUserQuestion') {
+    const bad = questionsOk();
+    return bad ? { error: bad } : { kind: 'question', via: 'permission' };
+  }
+  if (raw.hook_event_name === 'PermissionRequest') return { kind: 'permission' };
+  if (raw.hook_event_name === 'PreToolUse' && raw.tool_name === 'AskUserQuestion') {
+    const bad = questionsOk();
+    return bad ? { error: bad } : { kind: 'question' };
   }
   return { error: 'only PermissionRequest, PreToolUse(AskUserQuestion) and Stop are relayed' };
 }
@@ -141,8 +151,10 @@ export function validateDecision(item, d) {
 
 /** The exact hook JSON for a decision (same shapes hooks/ceo-relay.sh prints). No decision -> {} (= no opinion).
  *  Only behavior/message and answers are ever emitted: no updatedPermissions, no rewritten tool input. */
-export function hookOutput(kind, toolInput, decision) {
+export function hookOutput(kind, toolInput, decision, via = null) {
   if (!decision) return {};
+  if (kind === 'question' && via === 'permission')        // PermissionRequest(AskUserQuestion): allow WITH the answers
+    return { hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'allow', updatedInput: { ...(toolInput || {}), answers: decision.answers } } } };
   if (kind === 'instruct') return { decision: 'block', reason: decision.text };   // Stop: continue with this instruction
   if (kind === 'permission') {
     const dec = decision.behavior === 'allow' ? { behavior: 'allow' }
@@ -200,6 +212,7 @@ export class Relay {
       if (clipped) item.clipped = true;
     }
     if (c.kind === 'question') item.questions = cleanQuestions(ti.questions);   // kept under --redact: needed to answer
+    if (c.via) item.via = c.via;
     if (c.kind === 'instruct') { item.asks = true; if (!this.redact) item.msg = raw.last_assistant_message.slice(0, REPORT_MAX); }
     const p = { item, toolInput: ti, rawTarget: target, alive };
     const wait = new Promise(res => { p.settle = res; });

@@ -886,3 +886,68 @@ test('waits: a permission prompt (terminal prompt shows alongside) is held up to
   assert.equal((skill.match(/ceo-relay\.sh\\\\?"","timeout":600\}/g) || []).length, 2, 'setup writes timeout 600 for both relay hooks');
   assert.match(skill, /Raise the timeout to 600/, 'and offers to raise an old 180');
 });
+
+// ---------- PermissionRequest FOR AskUserQuestion (bypassPermissions, or after the PreToolUse hold timed out) ----------
+const permAsk = (o = {}) => permInput({ tool_name: 'AskUserQuestion', tool_input: { questions: QUESTIONS }, permission_mode: 'bypassPermissions', ...o });
+
+test('PermissionRequest(AskUserQuestion) is a question: answered with allow + updatedInput.answers, never a bare allow', () => {
+  assert.deepEqual(classifyInput(permAsk()), { kind: 'question', via: 'permission' });
+  assert.ok(classifyInput(permAsk({ tool_input: { questions: [] } })).error);
+  const answers = { 'Which framework?': 'React', 'Which extras?': 'ESLint' };
+  assert.deepEqual(hookOutput('question', { questions: QUESTIONS }, { answers }, 'permission'),
+    { hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'allow', updatedInput: { questions: QUESTIONS, answers } } } });
+  const r = new Relay();
+  const a = r.ask(permAsk(), 5000);
+  assert.deepEqual([a.item.kind, a.item.via, a.item.questions.length], ['question', 'permission', 2]);
+  assert.equal(r.answer(a.id, { behavior: 'allow' }).status, 400, 'a bare allow is refused: it would answer nothing');
+  assert.equal(r.answer(a.id, { answers: { 'Which framework?': 'React' } }).status, 400, 'every question must be answered');
+  assert.equal(r.answer(a.id, { answers: { 'Which framework?': '직접 쓴 답', 'Which extras?': ['ESLint', 'Prettier'] } }).status, 200);
+});
+
+test('ceo-relay.sh: PermissionRequest(AskUserQuestion) -> PermissionRequest allow with the answers; long wait; partial / bare allow -> nothing', async () => {
+  const logs = fs.mkdtempSync(path.join(tmp, 'permask-'));
+  const port = await startServer(['--logs', logs]);
+  const v = await viewer(port);
+  const run = runHook(permAsk(), { OFFICE_PORT: String(port), OFFICE_RELAY_WAIT_MS: '3000', OFFICE_RELAY_QUESTION_WAIT_MS: '60000', OFFICE_RELAY_DEBUG: '1' });
+  const f = await v.waitFor(x => x.type === 'ask' && x.item.kind === 'question' && x.item.via === 'permission');
+  assert.equal(f.item.expiresAt - f.item.createdAt, 3000, 'uses the approval wait (OFFICE_RELAY_WAIT_MS), not the question wait');
+  assert.deepEqual(f.item.questions.map(q => q.question), QUESTIONS.map(q => q.question), 'rendered as a question card');
+  await curlAnswer(port, f.item.id, { answers: { 'Which framework?': ' Svelte\n(직접 입력) ', 'Which extras?': ['ESLint'] } });
+  const r = await run;
+  pipeLog.push(['PermissionRequest(AskUserQuestion) answered', r.out.trim()]);
+  assert.equal(r.code, 0);
+  assert.deepEqual(JSON.parse(r.out), { hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'allow',
+    updatedInput: { questions: QUESTIONS, answers: { 'Which framework?': 'Svelte (직접 입력)', 'Which extras?': 'ESLint' } } } } });
+  v.close();
+  // default wait for this case is the long approval wait even when the question wait is short
+  const base = { ...process.env }; delete base.OFFICE_RELAY_WAIT_MS;
+  const err = await new Promise(resolve => {
+    const p = spawn('bash', [HOOK], { env: { ...base, OFFICE_PORT: '9', OFFICE_RELAY_DEBUG: '1', OFFICE_RELAY_QUESTION_WAIT_MS: '60000' }, stdio: ['pipe', 'pipe', 'pipe'] });
+    let e = ''; p.stderr.on('data', b => { e += b; }); p.on('close', () => resolve(e)); p.stdin.end(JSON.stringify(permAsk()));
+  });
+  assert.match(err, /wait_ms=540000 /);
+
+  // a hostile / buggy server reply: partial answers, a bare allow, answers for other questions -> the hook prints nothing
+  let reply = {};
+  const fake = http.createServer((req, res) => { req.resume(); req.on('end', () => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(reply)); }); });
+  await new Promise(rs => fake.listen(0, '127.0.0.1', rs));
+  try {
+    for (const bad of [{ kind: 'question', decision: { answers: { 'Which framework?': 'React' } } }, { kind: 'permission', decision: { behavior: 'allow' } },
+      { kind: 'question', decision: { behavior: 'allow' } }, { kind: 'question', decision: { answers: { 'Not a question?': 'x', 'Which extras?': 'y' } } }]) {
+      reply = bad;
+      const o = await runHook(permAsk(), { OFFICE_PORT: String(fake.address().port), OFFICE_RELAY_WAIT_MS: '1000' });
+      assert.deepEqual([o.code, o.out], [0, ''], JSON.stringify(bad));
+    }
+  } finally { fake.close(); }
+});
+
+test('대표실 queue: a PermissionRequest for AskUserQuestion opens a question entry (replacing an expired one for the same character)', async () => {
+  const { ceoStep } = await import('../public/ceo.js');
+  const m = new Map();
+  ceoStep(m, { ev: 'PreToolUse', sid: 'S', tool: 'AskUserQuestion', ask: '어느 쪽?', ts: '2026-10-22T06:27:44Z' });
+  ceoStep(m, { ev: 'PermissionRequest', sid: 'S', tool: 'AskUserQuestion', ask: '어느 쪽?', ts: '2026-10-22T06:28:44Z' });
+  assert.equal(m.size, 1, 'one card per character');
+  assert.deepEqual([m.get('S|main').kind, m.get('S|main').text], ['ask', '어느 쪽?'], 'a question, not a 승인 card');
+  ceoStep(m, { ev: 'PermissionRequest', sid: 'S', tool: 'Bash', target: 'ls', ts: '2026-10-22T06:29:00Z' });
+  assert.equal(m.get('S|main').kind, 'perm');
+});

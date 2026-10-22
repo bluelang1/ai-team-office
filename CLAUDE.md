@@ -27,6 +27,8 @@ claude plugin validate . && claude plugin validate plugins/ai-team
 curl -s http://127.0.0.1:4747/healthz | jq '{version,viewers,hiddenViewers,pending}'   # what is running + who can hold relay items
 jq -nc '{session_id:"0f1e2d3c-aaaa-bbbb-cccc-00000000beef",cwd:"/x/relay-test",hook_event_name:"PermissionRequest",tool_name:"Bash",tool_input:{command:"echo test"}}' \
   | OFFICE_RELAY_WAIT_MS=300000 hooks/ceo-relay.sh   # fake approval card; prints the decision, runs nothing
+jq -nc '{session_id:"0f1e2d3c-aaaa-bbbb-cccc-00000000beef",cwd:"/x/relay-test",hook_event_name:"PermissionRequest",permission_mode:"bypassPermissions",tool_name:"AskUserQuestion",tool_input:{questions:[{question:"어느 쪽?",header:"선택",multiSelect:false,options:[{label:"A",description:""},{label:"B",description:""}]}]}}' \
+  | OFFICE_RELAY_WAIT_MS=300000 hooks/ceo-relay.sh   # fake permission-for-question card: a question card (options + 직접 입력); prints allow + updatedInput.answers
 jq -nc '{session_id:"0f1e2d3c-aaaa-bbbb-cccc-00000000beef",cwd:"/x/relay-test",hook_event_name:"Stop",stop_hook_active:false,last_assistant_message:"정리했어요.\n다음 결정: 머지할지 정해 주세요."}' \
   | OFFICE_RELAY_STOP_WAIT_MS=120000 hooks/ceo-stop.sh   # fake 결정 대기 card with a box (needs a VISIBLE tab); prints {"decision":"block",...}
 "<Chrome>" --headless=new --window-size=1400,300 --timeout=4000 --screenshot=out.png "http://127.0.0.1:4762/?sim=1"   # may hang: run in background, kill after ~10s

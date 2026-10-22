@@ -4,6 +4,7 @@
 //
 //   PreToolUse tool=AskUserQuestion           -> kind ask     HIGH  text = ask | target
 //   PermissionRequest                         -> kind perm    HIGH  text = ask | `${tool} ${target}`
+//   PermissionRequest tool=AskUserQuestion    -> kind ask     HIGH  (a question card: answered with the answers)
 //   Notification permission_prompt           -> kind notify  HIGH  text = msg (keeps an earlier HIGH entry's text)
 //   Notification idle_prompt                 -> kind idle    LOW   '입력을 기다리고 있어요' (keeps any open entry; a LOW
 //                                                                      courtesy that expires like a report, never "답이 필요해요")
@@ -47,7 +48,10 @@ export function ceoStep(map, e) {
       else drop(k);
       break;
     case 'PostToolUse': case 'PostToolUseFailure': drop(k); break;
-    case 'PermissionRequest': open(map, e, 'perm', HIGH, ask || `${s(e.tool)} ${s(e.target)}`.trim() || '승인이 필요해요'); break;
+    case 'PermissionRequest':                              // a permission prompt for AskUserQuestion is still a question
+      if (e.tool === 'AskUserQuestion') open(map, e, 'ask', HIGH, ask || s(e.target).trim() || '질문이 있어요');
+      else open(map, e, 'perm', HIGH, ask || `${s(e.tool)} ${s(e.target)}`.trim() || '승인이 필요해요');
+      break;
     case 'Notification': {
       if (e.ntype !== 'permission_prompt' && e.ntype !== 'idle_prompt') break;
       const prev = map.get(k);

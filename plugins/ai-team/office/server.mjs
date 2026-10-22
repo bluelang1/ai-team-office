@@ -632,8 +632,8 @@ async function relayAsk(req, res, url, asHook) {
   if (r.none) return none(r.none);                       // e.g. a Stop whose report does not ask: no hold, no log
   res.on('close', () => { if (!res.writableFinished) relay.withdraw(r.id); });
   const { decision, by } = await r.wait;
-  if (asHook) sendJson(res, 200, hookOutput(r.item.kind, r.toolInput, decision));
-  else sendJson(res, 200, { id: r.id, kind: r.item.kind, decision, by });
+  if (asHook) sendJson(res, 200, hookOutput(r.item.kind, r.toolInput, decision, r.item.via));
+  else sendJson(res, 200, { id: r.id, kind: r.item.kind, ...(r.item.via ? { via: r.item.via } : {}), decision, by });
 }
 
 async function relayAnswer(req, res) {

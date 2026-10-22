@@ -177,6 +177,8 @@ Claude Code 가 사람에게 묻는 두 가지 — 권한 확인(`PermissionRequ
 
 **권한 요청은 붙잡아도 터미널을 막지 않는다.** 터미널 승인 창이 훅과 동시에 뜨고, 터미널에서 먼저 답하면 훅 연결이 끊겨 카드가 `withdrawn` 으로 닫힌다(실사용 관찰, 공식 문서에는 명시 없음). 그래서 기본 대기를 최대(9분)로 둔다. 카드의 "터미널에서 답할게요" 는 대시보드 쪽 대기를 바로 끝낸다.
 
+**`AskUserQuestion` 의 권한 요청도 질문 카드다 (0.2.11).** bypassPermissions 이거나 질문 대기(`PreToolUse`)가 시간 초과된 뒤에는 Claude Code 가 `PermissionRequest`(tool `AskUserQuestion`)를 보낸다. 이때 터미널 질문 창은 이미 떠 있으므로(막지 않음) 승인 대기(`OFFICE_RELAY_WAIT_MS`, 기본 540초)를 쓰고, 카드는 승인/거부가 아니라 보기 + 직접 입력이다. 답하면 훅이 `{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow","updatedInput":{…, "answers":{…}}}}}` 를 스스로 만들어 낸다(공식 문서: PermissionRequest allow 의 `updatedInput` 은 도구 입력을 통째로 바꾸고, AskUserQuestion 의 `answers` 는 질문 원문 → 답). 모든 질문에 답이 있어야 하고, 답 없는 allow 는 절대 보내지 않는다. 한계: 이 조합(권한 단계에서 answers 를 넣는 것)이 이미 떠 있는 터미널 질문 창을 닫는지는 실제 세션에서 아직 확인하지 못했다 — 안 닫히면 터미널에서 한 번 더 답해야 할 수 있다.
+
 **질문(AskUserQuestion)은 대기 중 터미널 질문 창이 늦게 뜬다.** `PreToolUse` 훅은 도구 실행 *전*에 돌기 때문에, 훅이 기다리는 동안 터미널엔 질문 UI 가 아직 안 뜬다. 대기 시간이 지나야(또는 Esc 로 중단하거나 카드의 "터미널에서 답할게요" 를 눌러야) 터미널에서 답할 수 있다. 그래서 질문은 기본 120000, 설정 스킬은 60000 으로 짧게 둔다. 입력 자체를 막는 것은 Stop 중계(아래)뿐이다.
 
 ### API

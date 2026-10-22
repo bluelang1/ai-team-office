@@ -9,6 +9,8 @@
 #      returns), OFFICE_RELAY_DISABLE=1 (no-op). The hook `timeout` must be >= wait/1000 + 5 (setup writes 600).
 # The JSON printed is built here from narrow fields (behavior, message, answers) — the server cannot make this
 # script rewrite tool input or add permission rules. Questions are echoed back from Claude Code's own stdin.
+# A PermissionRequest for AskUserQuestion is answered like a question (allow + updatedInput.answers), never a bare
+# allow; it uses the long approval wait because its terminal UI is already showing.
 set -u
 [ "${OFFICE_RELAY_DISABLE:-}" = "1" ] && exit 0
 command -v curl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || exit 0
@@ -41,7 +43,29 @@ resp=$(printf '%s' "$input" | curl -q -s --fail --noproxy '*' --connect-timeout 
   "http://127.0.0.1:${port}/relay/ask?waitMs=${wait_ms}" 2>/dev/null) || exit 0
 [ -n "$resp" ] || exit 0
 
-if [ "$ev" = "PermissionRequest" ]; then
+# The answers for a question card (PreToolUse(AskUserQuestion), or a PermissionRequest FOR AskUserQuestion): an object
+# of strings from the server, kept only for Claude Code's own question texts, cleaned and capped below.
+answers_of() { jq -c '(.decision.answers // null) | if type == "object" and length > 0 and all(.[]; type == "string") then . else empty end' <<<"$resp" 2>/dev/null; }
+# $1 = hookEventName: PreToolUse -> permissionDecision allow + updatedInput; PermissionRequest -> decision allow + updatedInput.
+question_out() {
+  local answers; answers=$(answers_of) || return 0
+  [ -n "$answers" ] || return 0
+  jq -c --argjson a "$answers" --arg evn "$1" '
+    (.tool_input // {}) as $in
+    | [($in.questions // [])[] | .question] as $qs
+    | ($a | with_entries(select(.key as $k | any($qs[]; . == $k)) | .value |= (gsub("[[:cntrl:]]+"; " ") | .[0:500]))) as $ans
+    | if ($ans|length) == ($qs|length) and ($qs|length) > 0
+      then (if $evn == "PermissionRequest"
+            then {hookSpecificOutput: {hookEventName: "PermissionRequest", decision: {behavior: "allow", updatedInput: ($in + {answers: $ans})}}}
+            else {hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "allow", updatedInput: ($in + {answers: $ans})}} end)
+      else empty end' <<<"$input" 2>/dev/null
+}
+
+if [ "$ev" = "PermissionRequest" ] && [ "$tool" = "AskUserQuestion" ]; then
+  # The terminal question UI is already showing (a permission prompt does not wait for this hook), so a bare "allow"
+  # would do nothing: only answers count, and only when every question is answered.
+  out=$(question_out PermissionRequest) || exit 0
+elif [ "$ev" = "PermissionRequest" ]; then
   out=$(jq -c '
     (.decision // null) as $d
     | if ($d|type) != "object" then empty
@@ -52,15 +76,7 @@ if [ "$ev" = "PermissionRequest" ]; then
             decision: ({behavior: "deny"} + (if ($m|length) > 0 then {message: $m} else {} end))}}
       else empty end' <<<"$resp" 2>/dev/null) || exit 0
 else
-  answers=$(jq -c '(.decision.answers // null) | if type == "object" and length > 0 and all(.[]; type == "string") then . else empty end' <<<"$resp" 2>/dev/null) || exit 0
-  [ -n "$answers" ] || exit 0
-  out=$(jq -c --argjson a "$answers" '
-    (.tool_input // {}) as $in
-    | [($in.questions // [])[] | .question] as $qs
-    | ($a | with_entries(select(.key as $k | any($qs[]; . == $k)) | .value |= (gsub("[[:cntrl:]]+"; " ") | .[0:500]))) as $ans
-    | if ($ans|length) == ($qs|length) and ($qs|length) > 0
-      then {hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "allow", updatedInput: ($in + {answers: $ans})}}
-      else empty end' <<<"$input" 2>/dev/null) || exit 0
+  out=$(question_out PreToolUse) || exit 0
 fi
 [ -n "$out" ] && printf '%s\n' "$out"
 exit 0

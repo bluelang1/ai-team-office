@@ -73,3 +73,9 @@
 - Question cards: **직접 입력** free-text answer per question (like Claude Code's Other), cleaned and capped at 500 like the hook; works in the card and the drawer
 - Docs: README (EN/KO) covers the 0.2.9/0.2.10 대표실 features, how each relay wait works, and upgrade steps
 - **Upgrading to 0.2.10:** run `/ai-team:ai-team-setup` again to raise the relay hook `timeout` to 600 and (optionally) add the Stop hook for the instruction box, then restart your Claude Code sessions (running sessions keep their old hooks)
+
+## 0.2.11 — 2026-10-22
+- Fix: a `PermissionRequest` for `AskUserQuestion` (e.g. in bypassPermissions, or after the question hold timed out) showed a generic 승인 card whose allow answered nothing. It is now a question card (options + 직접 입력); answering makes `ceo-relay.sh` print `allow` with `updatedInput` = the tool input plus `answers` (built from Claude Code's own questions, every question answered, cleaned, 500 chars). A bare allow or partial answers print nothing
+- That card uses the long approval wait (`OFFICE_RELAY_WAIT_MS`, 540 s): the terminal question UI is already showing, so holding does not block it
+- One card per character: the expired question card is replaced by this one
+
