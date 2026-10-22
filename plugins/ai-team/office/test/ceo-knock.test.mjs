@@ -28,3 +28,29 @@ test('hover card: stays open on the character or the card, closes only after a g
   h.enter('anchor'); h.leave('anchor'); h.enter('anchor'); run(1000); assert.equal(closed, 1, 'back on the character -> stays');
   h.leave('anchor'); h.reset(); run(1000); assert.equal(closed, 1, 'reset (closed/pinned elsewhere) cancels the pending close');
 });
+
+test('hover switching: passing through another person on the way to the card never swaps it; resting 150ms does', () => {
+  let now = 0, closed = 0; const timers = new Map(); let n = 0;
+  const fake = { set: (f, t) => { timers.set(++n, { f, at: now + t }); return n; }, clear: id => timers.delete(id) };
+  const run = ms => { const end = now + ms; for (;;) { const due = [...timers].filter(([, t]) => t.at <= end).sort((a, b) => a[1].at - b[1].at)[0]; if (!due) break; now = due[1].at; timers.delete(due[0]); due[1].f(); } now = end; };
+  const shown = []; const open = k => () => shown.push(k);
+  const h = new HoverHold(() => closed++, 300, fake, 150);
+  h.over('front', open('front'));
+  assert.deepEqual(shown, ['front'], 'first hover opens at once');
+  h.out('front'); run(20); h.over('back', open('back')); run(40);
+  assert.deepEqual(shown, ['front'], 'moving to the back person does not switch before the dwell');
+  run(120);
+  assert.deepEqual(shown, ['front', 'back'], 'resting on the back person ≥150ms switches');
+  // the bug path: back card open, pointer heads for the card and crosses the front person on the way
+  h.out('back'); run(16); h.over('front', open('front')); run(60); h.out('front'); run(16); h.enter('card'); run(1000);
+  assert.deepEqual(shown, ['front', 'back'], 'crossing the front person (76ms) does not bring its card back');
+  assert.equal(closed, 0, 'and the back card stayed open');
+  h.over('front', open('front')); run(500);
+  assert.deepEqual(shown, ['front', 'back'], 'while the pointer is on the card, a person under it never takes over');
+  h.leave('card'); run(10); h.over('front', open('front')); run(149);
+  assert.deepEqual(shown, ['front', 'back'], '149ms is still passing through');
+  h.over('front', open('front')); run(1);
+  assert.deepEqual(shown, ['front', 'back', 'front'], 'repeated pointerover on the same person keeps one timer; 150ms switches');
+  h.out('front'); run(300); assert.equal(closed, 1, 'leaving everything closes after the grace');
+  h.reset(); h.over('x', open('x')); assert.deepEqual(shown.at(-1), 'x', 'after reset (closed / pinned) the next hover opens at once');
+});

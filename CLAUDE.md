@@ -22,11 +22,13 @@ cd plugins/ai-team/office
 node --test test/                                   # all tests (must stay green)
 HOME=$(mktemp -d) node server.mjs --port 4762       # scratch server, never touches real ~/.claude
 open "http://127.0.0.1:4762/?sim=1&speed=20"        # simulator (fake data)
-# handy URL flags: ?sky=morning|day|evening|night  ?fx=star,couple  ?bye=1&day=YYYY-MM-DD
+# handy URL flags: ?sky=morning|day|evening|night  ?fx=star,couple  ?bye=1&day=YYYY-MM-DD  ?read=1 (first report card in the 크게 보기 drawer)  ?list=1 (대표실 list drawer)
 claude plugin validate . && claude plugin validate plugins/ai-team
 curl -s http://127.0.0.1:4747/healthz | jq '{version,viewers,hiddenViewers,pending}'   # what is running + who can hold relay items
 jq -nc '{session_id:"0f1e2d3c-aaaa-bbbb-cccc-00000000beef",cwd:"/x/relay-test",hook_event_name:"PermissionRequest",tool_name:"Bash",tool_input:{command:"echo test"}}' \
   | OFFICE_RELAY_WAIT_MS=300000 hooks/ceo-relay.sh   # fake approval card; prints the decision, runs nothing
+jq -nc '{session_id:"0f1e2d3c-aaaa-bbbb-cccc-00000000beef",cwd:"/x/relay-test",hook_event_name:"Stop",stop_hook_active:false,last_assistant_message:"정리했어요.\n다음 결정: 머지할지 정해 주세요."}' \
+  | OFFICE_RELAY_STOP_WAIT_MS=300000 hooks/ceo-stop.sh   # fake 결정 대기 card with a box (needs a VISIBLE tab); prints {"decision":"block",...}
 "<Chrome>" --headless=new --window-size=1400,300 --timeout=4000 --screenshot=out.png "http://127.0.0.1:4762/?sim=1"   # may hang: run in background, kill after ~10s
 ```
 

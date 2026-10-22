@@ -11,9 +11,9 @@ import { SeatBook } from './seats.js';
 import { displayName, lookOf, rankOf, jobOf, JOB_LONG, nickname, nameFromWho, resetNames, ACT_KO, hash32, mainTitle } from './roles.js';
 import { layoutFloors, mountBuilding, renderOverview, elevatorFx } from './building.js';
 import { openFloorEditor } from './editor.js';
-import { ceoStep, ceoList, ceoResolve, ceoReset, ceoExpire, HIGH, dismissKey, visibleQueue, releasePlan, DismissStore, ceoSpots, reportText, CEO_PLAN, CEO_KNOCK, ceoEntry, HoverHold } from './ceo.js';
+import { ceoStep, ceoList, ceoResolve, ceoReset, ceoExpire, HIGH, dismissKey, visibleQueue, releasePlan, DismissStore, ceoSpots, reportText, reportDecision, reportBlocks, linkParts, readerSame, ceoTable, nextSort, LIST_COLS, ceoMore, ceoGroupPlan, groupTip, groupEntry, pruneSel, selectRows, selectRange, selState, selHigh, selHidden, selEntries, CEO_PLAN, CEO_KNOCK, ceoEntry, HoverHold } from './ceo.js';
 import { Usage, bindTips, usageSummaryHTML, detailHTML } from './charts.js';
-import { applyFrame, sweep, resetRelay, mergeQueue, relayHTML, relayLive, onRelayClick, onRelayInput, decidedKey, keyOfRelay, releaseRelay, officeHeaders, staleBoot } from './ceocard.js';
+import { relay as relayState, whyNoButtons, instructOff, applyFrame, sweep, resetRelay, mergeQueue, relayHTML, relayLive, onRelayClick, onRelayInput, decidedKey, keyOfRelay, releaseRelay, officeHeaders, staleBoot } from './ceocard.js';
 import * as sim from './sim.js';
 
 const $ = id => document.getElementById(id);
@@ -231,6 +231,7 @@ setInterval(() => {
   if (sweep(now)) sceneDirty = bldDirty = true;
   try { state = tick(state, now); } catch { /* keep last good state */ }
   dirtyAll(); if (pop.kind) renderPop();
+  renderReader();
 }, 1000);
 
 // ---------------- floors (building) and rooms (sessions) ----------------
@@ -284,7 +285,7 @@ $('roomtabs').onclick = ev => {
 const bld = mountBuilding($('building'), {
   onSelect: selectFloor,
   onAuto: () => { ui.pinned = false; ui.overview = false; dirtyAll(); },
-  onOverview: () => { ui.overview = !ui.overview; dirtyAll(); },
+  onOverview: () => { ui.overview = !ui.overview; if (ui.overview && pop.kind === 'q') closePop(); dirtyAll(); },
   onSettings: openEditor,
 });
 function renderBuilding(k, list) {
@@ -697,63 +698,102 @@ function renderCeo(list) {
   const line = $('ceo-line'), keys = new Set(), now = performance.now();
   // Queue spots in front of the desk on the door side (ceo.js CEO_PLAN); everyone faces right, toward the 대표.
   const cs = parseFloat(getComputedStyle($('ceo')).getPropertyValue('--s')) || S, roomW = (line.clientWidth || 268) / cs;
-  const spots = ceoSpots(list.length, roomW), cap = spots.length;
-  list.slice(0, cap).forEach((q, i) => {
-    keys.add(q.key);
-    let f = figs.get(q.key);
+  // Adaptive grouping (ceo.js ceoGroupPlan): everyone stands individually while the line fits; only when it would
+  // overflow, each session becomes one figure (its highest-priority member, ×N badge). +N then counts groups.
+  const seats = ceoSpots(99, roomW).length, plan = ceoGroupPlan(list, seats);
+  // +N is a real button (≥ 34×32 px) by the door, a few units clear of the last figure (ceo.js ceoMore).
+  const lay = ceoMore(plan.figures.length, roomW, Math.ceil(36 / cs), 3), spots = lay.spots, cap = spots.length;
+  plan.figures.slice(0, cap).forEach((g, i) => {
+    const q = g.rep;
+    keys.add(g.key);
+    let f = figs.get(g.key);
     if (!f) {
       const el = document.createElement('button');
       el.type = 'button'; el.className = 'qf';
-      el.innerHTML = '<span class="qb"></span><span class="qk" aria-hidden="true">똑똑</span><canvas width="24" height="32"></canvas><span class="qn"></span>';
-      // Newcomers stop at the door, knock ("똑똑"), then walk to their spot (ceo.js ceoEntry; never on reload/replay).
-      const entry = ceoEntry(q.key, { known: ceoKnown, sameFloor: q.sid === ui.sid, reduced: reducedMotion.matches });
+      el.innerHTML = '<span class="qb"></span><span class="qk" aria-hidden="true">똑똑</span><canvas width="24" height="32"></canvas><span class="qn"></span><span class="qx" hidden></span>';
+      // Newcomers stop at the door, knock ("똑똑"), then walk to their spot (ceo.js groupEntry/ceoEntry; never on
+      // reload/replay; people already waiting who only regroup, or join an existing group, never knock again).
+      const entry = groupEntry(g, { known: ceoKnown, sameFloor: g.sid === ui.sid, reduced: reducedMotion.matches });
       if (entry.anim) el.classList.add(entry.anim);
       line.append(el);
-      f = { el, cv: el.querySelector('canvas'), q, knock: entry.knock };
-      figs.set(q.key, f);
+      f = { el, cv: el.querySelector('canvas'), q, knock: entry.knock, n: g.n };
+      figs.set(g.key, f);
       if (entry.knock) {
         // at the door (kept fully inside the room); a second simultaneous newcomer waits a step behind
-        f.door = Math.min(CEO_PLAN.door, roomW - 14) - 14 * [...figs.values()].filter(g => g.knock && g !== f).length;
+        f.door = Math.min(CEO_PLAN.door, roomW - 14) - 14 * [...figs.values()].filter(h => h.knock && h !== f).length;
         el.classList.add('knock');
         const ff = f; setTimeout(() => endKnock(ff), CEO_KNOCK.ms);
         if (ui.sound) setTimeout(knockSound, CEO_KNOCK.bubbleAt);
       }
+    } else if (g.n > f.n && ceoKnown && !reducedMotion.matches) {   // someone joined this group: pulse the badge once
+      const x = f.el.querySelector('.qx'); x.classList.remove('pulse'); void x.offsetWidth; x.classList.add('pulse');
+      setTimeout(() => x.classList.remove('pulse'), 700);
     }
+    f.n = g.n; f.members = g.members.map(m => m.key);
     const w = whoOf(q), sp = spots[i];
-    f.q = q; f.r = sp.r; f.el.dataset.key = q.key; f.el.classList.toggle('front', i === 0);
+    f.q = q; f.r = sp.r; f.el.classList.toggle('front', i === 0);
+    f.el.dataset.key = g.n === 1 ? q.key : ''; f.el.dataset.group = g.n > 1 ? g.sid : '';
     f.el.style.setProperty('--qr', String(f.knock ? f.door : sp.r)); f.el.dataset.face = sp.face;
-    f.el.classList.toggle('hi', q.prio === HIGH); f.el.classList.toggle('lo', q.prio !== HIGH); f.el.classList.toggle('can', !!q.relay && q.relay.status === 'pending');
+    f.el.classList.toggle('hi', g.high); f.el.classList.toggle('lo', !g.high); f.el.classList.toggle('can', g.members.some(m => m.relay?.status === 'pending'));
     const txt = q.text.length > 18 ? `${q.text.slice(0, 17)}…` : q.text;
     const qb = f.el.querySelector('.qb'); if (qb.textContent !== txt) qb.textContent = txt;
     const nm = displayName(w), fn = rowOf(q.proj)?.n, short = `${fn ? `${fn}F ` : ''}${q.aid ? nickname(q.aid) : '실장'}`;
     const qn = f.el.querySelector('.qn'); if (qn.textContent !== short) qn.textContent = short;
-    f.el.setAttribute('aria-label', `${nm}: ${q.text}`);
-    f.spec = { look: lookOf(w), model: MODELS.includes(w.model) ? w.model : 'unknown', view: 'side', pose: f.knock || q.prio === HIGH ? 'hand' : 'stand', prop: 'clipboard' };
+    const qx = f.el.querySelector('.qx'); qx.hidden = g.n < 2; qx.textContent = `×${g.n}`; qx.classList.toggle('hot', g.high);
+    const tip = g.n > 1 ? `세션 ${g.sid.slice(0, 4)} · ${groupTip(g)}` : '';
+    if (g.n > 1) { f.el.title = tip; f.el.setAttribute('aria-label', `${nm} 외 ${g.n - 1}건 (${tip}) · 목록 보기`); f.el.setAttribute('aria-haspopup', 'dialog'); }
+    else { f.el.removeAttribute('title'); f.el.setAttribute('aria-label', `${nm}: ${q.text}`); f.el.removeAttribute('aria-haspopup'); }
+    f.spec = { look: lookOf(w), model: MODELS.includes(w.model) ? w.model : 'unknown', view: 'side', pose: f.knock || g.high ? 'hand' : 'stand', prop: 'clipboard' };
   });
   ceoKnown = ui.live ? new Set(list.map(q => q.key)) : null;
+  const waitingNow = new Set(list.map(q => q.key));
   for (const [k, f] of figs) if (!keys.has(k) && !f.leaving) {
+    // Only someone who actually left the line bows out. A figure whose people are still waiting (regrouped, or moved
+    // behind +N) is replaced in place without a bow.
+    if ((f.members || [f.q?.key]).some(m => waitingNow.has(m))) { f.el.remove(); figs.delete(k); continue; }
     f.leaving = now; f.spec = { ...f.spec, pose: 'bow', prop: null }; f.el.classList.add('bye');
     setTimeout(() => { f.el.remove(); figs.delete(k); }, reducedMotion.matches ? 0 : 480);
   }
   let more = line.querySelector('.qmore');
-  if (list.length > cap) { if (!more) { more = document.createElement('span'); more.className = 'qmore'; line.append(more); } more.textContent = `+${list.length - cap}`; more.title = `대기 ${list.length - cap}명 더`; more.style.setProperty('--qr', String(spots[cap - 1].r + 16)); }
-  else more?.remove();
+  if (lay.more) {
+    if (!more) { more = document.createElement('button'); more.type = 'button'; more.className = 'qmore'; more.setAttribute('aria-haspopup', 'dialog'); line.append(more); }
+    const unit = plan.grouped ? '팀' : '명';
+    more.textContent = `+${lay.more}`; more.title = `대기 ${lay.more}${unit} 더 · 목록 보기`; more.setAttribute('aria-label', `대기 ${lay.more}${unit} 더 · 대표실 목록 보기`);
+    more.style.setProperty('--qr', String(lay.r));
+  } else more?.remove();
   $('needs').hidden = !high; $('needs').querySelector('b').textContent = high;
   if (high > lastHigh && ui.sound && ui.live) chime();
   lastHigh = high;
 }
+/** The 대표실 figure standing for an entry (itself, or its session group). */
+const figFor = (key, sid = null) => (key && figs.get(key)) || [...figs.values()].find(f => !f.leaving && key && f.members?.includes(key))
+  || (sid ? [...figs.values()].find(f => !f.leaving && f.el.dataset.group === sid) : null);
 const togglePop = (kind, key, el) => { if (pop.pinned && pop.kind === kind && pop.key === key) closePop(); else openPop(kind, key, el, true); };
-$('ceo-line').addEventListener('click', ev => { const b = ev.target.closest('.qf'); if (b) togglePop('q', b.dataset.key, b); });
-$('ceo-line').addEventListener('pointerover', ev => { const b = ev.target.closest('.qf'); if (b && !pop.pinned) { openPop('q', b.dataset.key, b, false); if (holdable(ev)) hover.enter('anchor'); } });
+$('ceo-line').addEventListener('click', ev => {
+  if (ev.target.closest('.qmore')) { closePop(); openList(ev.target.closest('.qmore')); return; }
+  const b = ev.target.closest('.qf'); if (!b) return;
+  if (b.dataset.group) { closePop(); openList(b, { sid: b.dataset.group }); return; }   // a session group: its list
+  if (b.dataset.key) togglePop('q', b.dataset.key, b);
+});
+// Hover (mouse, wide): HoverHold decides — a short rest on another person is needed to switch cards, so crossing
+// someone on the way to the open card never swaps it. Touch / narrow: open at once as before.
+$('ceo-line').addEventListener('pointerover', ev => {
+  const b = ev.target.closest('.qf'); if (!b || pop.pinned || !b.dataset.key) return;   // groups: title tooltip, no card
+  const key = b.dataset.key;
+  if (holdable(ev)) hover.over(`q:${key}`, () => { const el = [...$('ceo-line').querySelectorAll('.qf')].find(x => x.dataset.key === key); if (el) openPop('q', key, el, false); });
+  else openPop('q', key, b, false);
+});
 // Narrow screens: opening the 대표실 banner jumps straight to the first request that needs an answer (2 taps to approve).
 function openFirstCard() {
   if (!narrowMQ.matches) return;
   const q = lastList.find(x => x.relay?.status === 'pending') || lastList.find(x => x.prio === HIGH) || lastList[0];
-  const f = q && figs.get(q.key);
+  const f = q && figFor(q.key);
   if (f) requestAnimationFrame(() => openPop('q', q.key, f.el, true));
 }
 $('ceo-h').onclick = () => { const o = $('ceo').classList.toggle('open'); $('ceo-h').setAttribute('aria-expanded', String(o)); if (o) openFirstCard(); else closePop(); };
-$('needs').onclick = () => { $('ceo').classList.add('open', 'flash'); $('ceo-h').setAttribute('aria-expanded', 'true'); openFirstCard(); $('ceo').scrollIntoView({ block: 'nearest' }); setTimeout(() => $('ceo').classList.remove('flash'), 900); };
+$('needs').onclick = () => {
+  if (ui.overview) { openList($('needs')); return; }     // 전체 보기 hides the 대표실 corner: show the list instead
+  $('ceo').classList.add('open', 'flash'); $('ceo-h').setAttribute('aria-expanded', 'true'); openFirstCard(); $('ceo').scrollIntoView({ block: 'nearest' }); setTimeout(() => $('ceo').classList.remove('flash'), 900); };
 
 // ---------------- popover card: character or 대표실 request ----------------
 const pop = { kind: null, key: null, pinned: false, anchor: null };
@@ -764,51 +804,68 @@ function closePop() { pop.kind = null; pop.pinned = false; $('pop').hidden = tru
 const hover = new HoverHold(() => { if (!pop.pinned) closePop(); });
 const holdable = ev => ev.pointerType === 'mouse' && !narrowMQ.matches;
 /** The pointer left a hover anchor (character or 대표실 figure). */
-function anchorOut(ev) { if (pop.pinned) return; if (holdable(ev)) hover.leave('anchor'); else closePop(); }
+function anchorOut(ev, key) { if (pop.pinned) return; if (holdable(ev)) hover.out(key); else closePop(); }
 let liveSince = 0, repBody = '';
-function renderPop() {
-  const el = $('pop');
-  let html = '';
-  repBody = '';
-  if (pop.kind === 'q') {
-    const q = lastList.find(x => x.key === pop.key);
-    if (!q) return closePop();
-    const w = whoOf(q);
-    repBody = q.kind === 'report' && typeof q.body === 'string' ? q.body : '';
-    html = `<header><b>${esc(displayName(w))}</b><span class="prio ${q.prio}">${q.prio === HIGH ? '답이 필요해요' : q.kind === 'idle' ? '대기 중' : '보고'}</span></header>
+const EST_TAG = '<span class="est" title="보고 끝부분의 질문·결정 문구로 추정했어요 (관측 아님)">추정</span>';
+const READ_BTN = '<button type="button" class="chipbtn" data-a="read" aria-haspopup="dialog" title="이 카드를 오른쪽에 크게 열어요">크게 보기</button>';
+const COPYALL_BTN = '<button type="button" class="chipbtn" data-a="copyall">전체 복사</button>';
+const FOCUS_BTN = '<button type="button" class="chipbtn primary" data-a="focus">터미널로</button>';
+const prioKo = q => (q.prio === HIGH ? '답이 필요해요' : q.kind === 'idle' ? '대기 중' : q.asks ? '결정 대기' : '보고');
+/** One card's parts, shared by the small popover card and the 크게 보기 drawer (same markup, same handlers).
+ *  kind 'q' = 대표실 entry (key = queue key), 'c' = character (key = sprite key, sid = that room's session).
+ *  -> { q?, c?, sid, since, body, head (header + meta), main (small-card middle), btns (bottom row), note } | null */
+function cardParts(kind, key, sid) {
+  if (kind === 'q') {
+    const q = lastList.find(x => x.key === key);
+    if (!q) return null;
+    const w = whoOf(q), body = q.kind === 'report' && typeof q.body === 'string' ? q.body : '';
+    const top = `<header><b>${esc(displayName(w))}</b><span class="tags">${q.asks ? EST_TAG : ''}<span class="prio ${q.prio}">${prioKo(q)}</span></span></header>
       <dl><dt>층</dt><dd>${esc(floorLabel(q.proj))}${rowOf(q.proj)?.label !== q.proj ? ` <small>${esc(q.proj)}</small>` : ''}</dd>
-      <dt>세션</dt><dd class="mono">${esc(q.sid.slice(0, 4))}</dd><dt>기다린 시간</dt><dd class="live-wait"></dd></dl>
-      ${q.relay ? relayHTML(q.relay) : q.kind === 'report' ? reportHTML(repBody) : `<p class="ask">${esc(q.text)}</p><p class="rl-left">${q.kind === 'idle' ? idleNote : relayNote}</p>`}
-      <div class="btns">${RELEASE_BTN}${q.kind === 'report' ? '' : '<button type="button" class="chipbtn" data-a="copy">복사</button>'}<button type="button" class="chipbtn primary" data-a="focus">터미널로</button></div>`;
-  } else if (pop.kind === 'c') {
-    const sp = sprites.get(pop.key), c = sp?.c && view(sp.c, spriteSid);
-    if (!c || c.ceo) return closePop();
-    const job = jobOf(c.atype), since = c.phase === 'tool' && c.toolSince ? c.toolSince : c.lastTs;
-    liveSince = since; repBody = typeof c.msg === 'string' ? c.msg : '';
-    const v = c.aid ? (c.verdict || state.verdicts[c.aid]?.v) : null;
-    const mine = !c.aid ? state.deleg.filter(d => d.sid === spriteSid && (d.verdict || state.verdicts[d.child]?.v)).map(d => d.verdict || state.verdicts[d.child].v) : [];
-    const vs = c.aid ? (v ? `<span class="vstamp ${v}">${VERDICT_KO[v]}</span> ${esc(state.verdicts[c.aid]?.note || '')}` : '판정 전')
-      : mine.length ? ['ok', 'rework', 'fail'].map(x => `${VERDICT_KO[x]} ${mine.filter(m => m === x).length}`).join(' · ') : '아직 없음';
-    html = `<header><b>${esc(displayName(c))}</b><span class="mbadge" style="${mstyle(c.model)}">${esc(c.model)}</span></header>
+      <dt>세션</dt><dd class="mono">${esc(q.sid.slice(0, 4))}</dd><dt>기다린 시간</dt><dd class="live-wait"></dd></dl>`;
+    const note = q.relay || q.kind === 'report' ? '' : `<p class="rl-left">${q.kind === 'idle' ? idleNote : whyHTML(q)}</p>`;
+    // A report that asks: with an instruct relay item (hooks/ceo-stop.sh) the card can send the next instruction;
+    // without one, say so honestly instead of showing a box that cannot send anything.
+    const insOff = q.kind === 'report' && q.asks && q.relay?.item?.kind !== 'instruct'
+      ? `<p class="rl-left ins-off">${esc(instructOff(q, relayState))}</p>` : '';
+    const main = q.kind === 'report' ? `${reportHTML(body)}${q.relay ? relayHTML(q.relay) : insOff}` : q.relay ? relayHTML(q.relay) : `<p class="ask">${esc(q.text)}</p>${note}`;
+    const btns = `${RELEASE_BTN}${READ_BTN}${q.kind === 'report' ? '' : '<button type="button" class="chipbtn" data-a="copy">복사</button>'}${FOCUS_BTN}`;
+    return { q, sid: q.sid, since: q.since, body, head: top, main, btns, note, insOff };
+  }
+  const sp = sprites.get(key), c = sp?.c && view(sp.c, sid);
+  if (!c || c.ceo) return null;
+  const job = jobOf(c.atype), since = c.phase === 'tool' && c.toolSince ? c.toolSince : c.lastTs, body = typeof c.msg === 'string' ? c.msg : '';
+  const v = c.aid ? (c.verdict || state.verdicts[c.aid]?.v) : null;
+  const mine = !c.aid ? state.deleg.filter(d => d.sid === sid && (d.verdict || state.verdicts[d.child]?.v)).map(d => d.verdict || state.verdicts[d.child].v) : [];
+  const vs = c.aid ? (v ? `<span class="vstamp ${v}">${VERDICT_KO[v]}</span> ${esc(state.verdicts[c.aid]?.note || '')}` : '판정 전')
+    : mine.length ? ['ok', 'rework', 'fail'].map(x => `${VERDICT_KO[x]} ${mine.filter(m => m === x).length}`).join(' · ') : '아직 없음';
+  const top = `<header><b>${esc(displayName(c))}</b><span class="mbadge" style="${mstyle(c.model)}">${esc(c.model)}</span></header>
       <dl><dt>직급</dt><dd>${c.aid ? rankOf(c.model) : '실장'}</dd><dt>직무</dt><dd>${c.aid ? `${JOB_LONG[job]} <small>${esc(c.atype)}</small>` : '실장 (메인 세션)'}</dd>
       <dt>모델</dt><dd>${c.model === 'unknown' && !c.aid ? '아직 모름 <small>(사용량 기록 대기)</small>' : esc(c.model)}</dd><dt>effort</dt><dd>${esc(c.effort || '—')} ${pipsSpan(c.effort, c.model)}</dd>
       <dt>현재 일</dt><dd>${esc(c.label || ACT_KO[c.act] || c.act)}${c.target ? ` · ${esc(head(c))}` : ''}</dd>
-      <dt>경과</dt><dd class="live-elapsed"></dd><dt>오늘 건수</dt><dd>도구 ${counts.get(`${spriteSid}|${c.aid || 'main'}`) || 0}건</dd>
-      <dt>판정</dt><dd>${vs}</dd><dt>상태</dt><dd>${OBS_KO[c.obs]}${c.failCount ? ` · 실패 ${c.failCount}` : ''}</dd></dl>
-      ${repBody ? reportHTML(repBody, '마지막 보고') : ''}
-      ${queueKeys.has(`${spriteSid}|${c.aid || 'main'}`) ? `<p class="rl-left">대표실에서 기다리는 중이에요</p><div class="btns">${RELEASE_BTN}</div>` : ''}`;
-  } else return;
-  if (el._h !== html) {                                         // only when the content changed (live values below use textContent)
+      <dt>경과</dt><dd class="live-elapsed"></dd><dt>오늘 건수</dt><dd>도구 ${counts.get(`${sid}|${c.aid || 'main'}`) || 0}건</dd>
+      <dt>판정</dt><dd>${vs}</dd><dt>상태</dt><dd>${OBS_KO[c.obs]}${c.failCount ? ` · 실패 ${c.failCount}` : ''}</dd></dl>`;
+  const queued = queueKeys.has(`${sid}|${c.aid || 'main'}`);
+  const note = queued ? '<p class="rl-left">대표실에서 기다리는 중이에요</p>' : '';
+  return { c, sid, since: null, body, head: top, main: `${body ? reportHTML(body, '마지막 보고') : ''}${note}`, btns: `${queued ? RELEASE_BTN : ''}${READ_BTN}`, note, live: since };
+}
+function renderPop() {
+  const el = $('pop');
+  const sid = pop.kind === 'c' ? spriteSid : null;
+  const p = pop.kind === 'q' || pop.kind === 'c' ? cardParts(pop.kind, pop.key, sid) : undefined;
+  if (p === undefined) return;
+  if (!p) return closePop();
+  repBody = p.body;
+  if (pop.kind === 'c') liveSince = p.live;
+  const html = `${p.head}\n      ${p.main}\n      <div class="btns">${p.btns}</div>`;
+  const st = p.q?.relay?.status || '';
+  if (el._h !== html && !(typingIn(el) && el._st === st)) {     // only when the content changed (live values below use textContent);
     const keep = el._rep === repBody ? el.querySelector('.report')?.scrollTop || 0 : 0;   // same report: keep the reader's place
-    el._h = html; el._rep = repBody; el.innerHTML = html;
+    const caret = typingIn(el) && inputState();                                          // never under a reason/instruction being typed,
+    el._h = html; el._rep = repBody; el._st = st; el.innerHTML = html;                   // unless the relay status changed
     const rep = el.querySelector('.report'); if (rep && keep) rep.scrollTop = keep;
+    restoreInput(el, caret);
   }
-  if (pop.kind === 'c') { const n = el.querySelector('.live-elapsed'); if (n) n.textContent = fmtDur(state.now - liveSince); }
-  if (pop.kind === 'q') {
-    const q = lastList.find(x => x.key === pop.key), lw = el.querySelector('.live-wait');
-    if (lw) lw.textContent = fmtDur(Date.now() - q.since);
-    if (q.relay) relayLive(el, q.relay);
-  }
+  cardLive(el, p);
   el.hidden = false;
   const r = pop.anchor?.getBoundingClientRect?.();
   if (r) {
@@ -818,13 +875,31 @@ function renderPop() {
     el.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
   }
 }
+/** Text fields whose typing must survive a repaint: the deny reason and the instruction box. */
+const TYPING = '.why, .ins';
+const typingIn = el => { const a = document.activeElement; return !!a && el.contains(a) && a.matches(TYPING); };
+const inputState = () => { const a = document.activeElement; return { cls: a.classList.contains('ins') ? '.ins' : '.why', v: a.value, s: a.selectionStart, e: a.selectionEnd }; };
+function restoreInput(el, c) {
+  const n = c && el.querySelector(c.cls);
+  if (!n || n.disabled) return;
+  n.value = c.v; try { n.focus({ preventScroll: true }); n.setSelectionRange(c.s, c.e); } catch { /* gone */ }
+}
+/** Live values inside a card (textContent only): wait / elapsed time and the relay countdown. */
+function cardLive(el, p) {
+  const n = el.querySelector('.live-elapsed'); if (n && p.c) n.textContent = fmtDur(state.now - p.live);
+  const lw = el.querySelector('.live-wait'); if (lw && p.q) lw.textContent = fmtDur(Date.now() - p.q.since);
+  if (p.q?.relay) relayLive(el, p.q.relay);
+}
 const idleNote = '할 일을 마치고 다음 지시를 기다려요. 잠시 뒤 자리로 돌아가요.';
-const relayNote = '이 요청은 여기서 답할 수 없어요 (대표실 중계가 꺼져 있거나 지난 요청). 터미널에서 답해 주세요.';
+/** Why this request has no buttons (ceocard.js whyNoButtons: timeout with the real wait, no dashboard, background tab,
+ *  hook gone, relay not installed (추정), or an old request). */
+const NOT_INSTALLED_TIP = '서버가 시작된 뒤 이 세션에서 대표실 중계 요청을 한 번도 받지 못했어요 (추정)';
+const whyHTML = q => { const w = whyNoButtons(q, relayState); return `${esc(w.text)}${w.inferred ? ` <span class="est" title="${esc(NOT_INSTALLED_TIP)}">추정</span>` : ''}`; };
 /** The 실장's (or a subagent's) final report: escaped plain text with line breaks, its own scroll, and 전체 복사. */
 function reportHTML(body, title = '보고 내용') {
   const t = reportText(body);
   if (!t) return `<p class="ask">보고 드렸어요</p><p class="rl-left">보고 본문이 기록되지 않았어요 (가림 모드이거나 이전 훅).</p>`;
-  return `<div class="report-h"><b>${esc(title)}</b><button type="button" class="chipbtn" data-a="copyall">전체 복사</button></div>
+  return `<div class="report-h"><b>${esc(title)}</b>${COPYALL_BTN}</div>
       <div class="report" tabindex="0" role="region" aria-label="${esc(title)}">${esc(t)}</div>`;
 }
 const popReport = () => {
@@ -832,37 +907,67 @@ const popReport = () => {
   return typeof v === 'string' ? v : '';
 };
 const popQ = () => lastList.find(x => x.key === pop.key);
-$('pop').addEventListener('input', ev => onRelayInput(ev, popQ()?.relay, renderPop));
-$('pop').addEventListener('change', ev => { if (ev.target.type === 'checkbox') onRelayInput(ev, popQ()?.relay, renderPop); });
-$('pop').addEventListener('keydown', ev => { if (ev.key === 'Enter' && ev.target.classList.contains('why')) ev.target.closest('.deny')?.querySelector('[data-a="deny"]')?.click(); });
-$('pop').addEventListener('click', async ev => {
+/** Re-render every open card view (popover + drawer) after an answer / draft change. */
+function rerenderCards() { if (pop.kind) renderPop(); renderReader(true); }
+async function focusTerminal(sid) {
+  if (!sid) { toast('어느 세션인지 몰라요. 터미널에서 확인해 주세요'); return; }
+  let ok = false;
+  try { ok = (await fetch(`/focus?sid=${encodeURIComponent(sid)}`)).ok; } catch { /* old server */ }
+  toast(ok ? '터미널을 앞으로 가져왔어요' : `터미널에서 답해 주세요 · 세션 ${sid.slice(0, 4)}`);
+}
+/** One click on a card action: the popover and the drawer both route here, so relay rules stay in one place.
+ *  ctx = { kind 'q'|'c', key, sid, body (for 전체 복사), done (close that view), opener }. */
+async function cardClick(ev, ctx) {
   const b = ev.target.closest('button'); if (!b) return;
+  const box = ev.target.closest('#pop, #rd-act');
+  if (b.dataset.a === 'read') { openReader(ctx.kind, ctx.key, ctx.sid, b); return; }
   if (b.dataset.a === 'copyall') {
-    const t = popReport();
-    try { await navigator.clipboard.writeText(t); toast('보고 전체를 복사했어요'); } catch { toast('복사가 막혔어요. 보고를 직접 선택해 주세요'); }
+    try { await navigator.clipboard.writeText(ctx.body || ''); toast('보고 전체를 복사했어요'); } catch { toast('복사가 막혔어요. 보고를 직접 선택해 주세요'); }
     return;
   }
   if (b.dataset.a === 'release') {
-    const key = pop.kind === 'q' ? pop.key : `${spriteSid}|${sprites.get(pop.key)?.c.aid || 'main'}`;
+    const key = ctx.kind === 'q' ? ctx.key : `${ctx.sid}|${sprites.get(ctx.key)?.c.aid || 'main'}`;
     const q = lastList.find(x => x.key === key);
-    if (q) { b.disabled = true; await sendBack([q]); closePop(); toast('돌려보냈어요 · 질문·승인은 터미널에서 계속 받을 수 있어요'); }
+    if (q) { b.disabled = true; await sendBack([q]); ctx.done(); toast('돌려보냈어요 · 질문·승인은 터미널에서 계속 받을 수 있어요'); }
     return;
   }
-  const q = popQ(); if (!q) return;
+  const q = ctx.kind === 'q' ? lastList.find(x => x.key === ctx.key) : null;
+  if (!q) { if (b.dataset.a === 'focus') focusTerminal(ctx.sid); return; }
   const r = q.relay;
-  if (onRelayClick(ev, r, () => { if (r?.status === 'answered') { resolveLocal(keyOfRelay(r)); toast('답을 보냈어요'); } sceneDirty = true; renderPop(); kick(); }, SIM)) return;
+  const after = opt => {
+    if (r?.status === 'answered') { resolveLocal(keyOfRelay(r)); toast(r.item.kind === 'instruct' ? '지시를 보냈어요 · 세션이 이어서 일해요' : '답을 보냈어요'); }
+    if (r?.status === 'released') toast(r.item.kind === 'instruct' ? '터미널에서 이어 주세요 · 세션은 멈춰 있어요' : '터미널로 넘겼어요 · 터미널에서 답해 주세요');
+    sceneDirty = true; rerenderCards(); kick();
+    const f = opt?.focus && box?.querySelector(opt.focus);
+    if (f) { f.focus({ preventScroll: true }); try { f.setSelectionRange(f.value.length, f.value.length); } catch { /* not a text field */ } }
+  };
+  if (onRelayClick(ev, r, after, SIM)) return;
   const qt = q.relay?.item?.kind === 'question' ? (q.relay.item.questions || []).map(x => x.question).join('\n') : q.text;
   if (b.dataset.a === 'copy') {
     try { await navigator.clipboard.writeText(qt); toast('질문을 복사했어요'); } catch { toast('복사가 막혔어요. 질문을 직접 선택해 주세요'); }
-  } else if (b.dataset.a === 'focus') {
-    let ok = false;
-    try { ok = (await fetch(`/focus?sid=${encodeURIComponent(q.sid)}`)).ok; } catch { /* old server */ }
-    toast(ok ? '터미널을 앞으로 가져왔어요' : `터미널에서 답해 주세요 · 세션 ${q.sid.slice(0, 4)}`);
-  }
+  } else if (b.dataset.a === 'focus') focusTerminal(q.sid);
+}
+/** Relay inputs (deny reason, checkboxes) and Enter-to-send, for a card container. */
+function bindCardInputs(el, relayOf) {
+  el.addEventListener('input', ev => onRelayInput(ev, relayOf(), rerenderCards));
+  el.addEventListener('change', ev => { if (ev.target.type === 'checkbox' && ev.target.dataset.q != null) onRelayInput(ev, relayOf(), rerenderCards); });
+  el.addEventListener('keydown', ev => {
+    if (ev.key !== 'Enter') return;
+    if (ev.target.classList.contains('why')) ev.target.closest('.deny')?.querySelector('[data-a="deny"]')?.click();
+    // instruction box: Enter = new line; Ctrl/⌘+Enter = 보내기 (same button, same double-submit guard)
+    else if (ev.target.classList.contains('ins') && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); ev.target.closest('.rl')?.querySelector('[data-a="instruct"]')?.click(); }
+  });
+}
+bindCardInputs($('pop'), () => popQ()?.relay);
+$('pop').addEventListener('click', ev => cardClick(ev, { kind: pop.kind, key: pop.key, sid: pop.kind === 'q' ? popQ()?.sid : spriteSid, body: popReport(), done: closePop }));
+spritesEl.addEventListener('pointerover', ev => {
+  const ch = ev.target.closest('.char'); if (!ch || pop.pinned || ch.dataset.id === '__ceo') return;
+  const id = ch.dataset.id;
+  if (holdable(ev)) hover.over(`c:${id}`, () => { const sp = sprites.get(id); if (sp) openPop('c', id, sp.el, false); });
+  else openPop('c', id, ch, false);
 });
-spritesEl.addEventListener('pointerover', ev => { const ch = ev.target.closest('.char'); if (ch && !pop.pinned && ch.dataset.id !== '__ceo') { openPop('c', ch.dataset.id, ch, false); if (holdable(ev)) hover.enter('anchor'); } });
-spritesEl.addEventListener('pointerout', ev => { const ch = ev.target.closest('.char'); if (ch && !ch.contains(ev.relatedTarget)) anchorOut(ev); });
-$('ceo-line').addEventListener('pointerout', ev => { const b = ev.target.closest('.qf'); if (b && !b.contains(ev.relatedTarget)) anchorOut(ev); });
+spritesEl.addEventListener('pointerout', ev => { const ch = ev.target.closest('.char'); if (ch && !ch.contains(ev.relatedTarget)) anchorOut(ev, `c:${ch.dataset.id}`); });
+$('ceo-line').addEventListener('pointerout', ev => { const b = ev.target.closest('.qf'); if (b && !b.contains(ev.relatedTarget)) anchorOut(ev, `q:${b.dataset.key}`); });
 $('pop').addEventListener('pointerenter', ev => { if (!pop.pinned && holdable(ev)) hover.enter('card'); });
 $('pop').addEventListener('pointerleave', ev => { if (!pop.pinned && holdable(ev)) hover.leave('card'); });
 // Pressing anything inside a hover-opened card pins it, so typing a reason or a slow click never loses it.
@@ -870,8 +975,324 @@ const pinHovered = () => { if (pop.kind && !pop.pinned) { pop.pinned = true; hov
 $('pop').addEventListener('pointerdown', pinHovered);
 $('pop').addEventListener('focusin', pinHovered);      // tabbing into the reason box pins it too
 spritesEl.addEventListener('click', ev => { const ch = ev.target.closest('.char'); if (ch && ch.dataset.id !== '__ceo') togglePop('c', ch.dataset.id, ch); });
-document.addEventListener('pointerdown', ev => { if (pop.pinned && !ev.target.closest('#pop, .char, .qf')) closePop(); });
-document.addEventListener('keydown', ev => { if (ev.key === 'Escape') { closePop(); if (!$('umodal').hidden) closeModal(); } });
+document.addEventListener('pointerdown', ev => {
+  if (reader.open) { if (!ev.target.closest('#reader')) closeReader(); return; }   // outside the drawer: close it only
+  if (pop.pinned && !ev.target.closest('#pop, .char, .qf')) closePop();
+});
+document.addEventListener('keydown', ev => {
+  if (ev.key !== 'Escape') return;
+  if (reader.open) { closeReader(); return; }
+  closePop(); if (!$('umodal').hidden) closeModal();
+});
+
+// ---------------- 크게 보기 drawer: a whole card, or the 대표실 list, on the right ----------------
+// Card mode: the same card as the popover (cardParts / cardClick: same markup, same relay rules), laid out for
+// reading: header + meta on top, a big reading area (decision lines, list items, links; A−/A+), the card's actions
+// at the bottom. Report text and request content are built with textContent / DOM links only (http/https, noopener).
+// It follows the same source (readerSame: same session and wait occurrence; the session id is captured at open, so
+// 터미널로 always targets it). When the entry leaves the line, or a character key now belongs to another session
+// (floor/room switch), the content freezes and 지난 보고 / 지난 요청 shows; its actions are removed.
+// List mode (대표 or +N): every waiting entry in a table (ceo.js ceoTable): sort, filter, multi-select + bulk
+// 돌려보내기 (sendBack: release without a decision + dismiss; never answers), new rows behind a "새 요청 N건" bar.
+const READ_SIZES = [12, 13, 14, 15, 16, 18, 20, 22];
+const reader = { open: false, mode: 'card', src: null, key: null, sid: null, since: null, body: '', past: false, opener: null, fromList: false,
+  auto: /[?&]read=1/.test(location.search), autoList: /[?&]list=1/.test(location.search), sig: {},
+  list: { sort: { col: 'at', dir: 'asc' }, filter: 'all', shown: new Set(), sel: new Set(), anchor: null, scroll: 0, confirm: false, html: '' } };
+const readerSize = () => { const v = Number(store.get('office.readerSize')); return READ_SIZES.includes(v) ? v : 15; };
+/** What sits under the drawer's key right now ({ sid, since } or null) — for readerSame. */
+function readerSource(src, key) {
+  if (src === 'q') { const q = lastList.find(x => x.key === key); return q ? { sid: q.sid, since: q.since } : null; }
+  return sprites.get(key)?.c && spriteSid ? { sid: spriteSid, since: null } : null;
+}
+/** Text with http(s) links as DOM nodes (text nodes + <a>, no HTML parsing). */
+function fillLinks(el, text) {
+  for (const p of linkParts(text)) {
+    if (p.t === 'url') { const a = document.createElement('a'); a.href = p.v; a.textContent = p.v; a.target = '_blank'; a.rel = 'noopener noreferrer'; el.append(a); }
+    else el.append(document.createTextNode(p.v));
+  }
+  return el;
+}
+const mk = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+/** The reading area: { label, decide: [lines], blocks: () => fills #rd-body } for a card's parts. */
+function readingOf(p) {
+  if (p.body) return { label: p.c ? '마지막 보고' : '보고 내용', decide: reportDecision(p.body), sig: `r|${p.body}`, fill(body) {
+    let ul = null;
+    for (const b of reportBlocks(reportText(p.body))) {
+      if (b.t === 'li') {
+        if (!ul) { ul = mk('ul'); body.append(ul); }
+        const li = fillLinks(mk('li'), b.text); if (b.depth) li.style.marginLeft = `${b.depth * 1.2}em`; ul.append(li);
+        continue;
+      }
+      ul = null;
+      body.append(b.t === 'gap' ? mk('div', 'rd-sp') : fillLinks(mk('p'), b.text));
+    }
+  } };
+  const it = p.q?.relay?.item;
+  if (it?.kind === 'permission') {
+    const cmd = typeof it.input?.command === 'string' ? it.input.command : it.target;
+    return { label: '승인 요청', decide: [], sig: `p|${it.id}|${it.tool}|${cmd}|${it.input?.description || ''}`, fill(body) {
+      body.append(mk('p', 'rd-k', '도구'), mk('p', 'rd-v', it.tool || '—'));
+      if (cmd != null) { body.append(mk('p', 'rd-k', it.input?.command != null ? '명령' : '대상')); body.append(mk('pre', 'rd-code', String(cmd))); }
+      if (typeof it.input?.description === 'string' && it.input.description) body.append(mk('p', 'rd-k', '설명'), fillLinks(mk('p'), it.input.description));
+      if (it.clipped) body.append(mk('p', 'rd-note', '(길어서 잘렸어요)'));
+    } };
+  }
+  if (it?.kind === 'question') {
+    const qs = Array.isArray(it.questions) ? it.questions : [];
+    return { label: qs.length > 1 ? `질문 ${qs.length}개` : '질문', decide: [], sig: `q|${it.id}|${JSON.stringify(qs)}`, fill(body) {
+      for (const q of qs) {
+        const h = mk('p', 'rd-qh'); if (q.header) h.append(mk('span', 'hchip', q.header), ' '); h.append(fillLinks(mk('span'), q.question || '')); body.append(h);
+        const ul = mk('ul');
+        for (const o of q.options || []) { const li = mk('li'); li.append(mk('b', null, o.label)); if (o.description) li.append(' — ', fillLinks(mk('span'), o.description)); ul.append(li); }
+        body.append(ul);
+      }
+    } };
+  }
+  const q = p.q;
+  if (q) return { label: q.kind === 'idle' ? '상태' : '요청 내용', decide: [], sig: `t|${q.text}|${q.tool}|${whyNoButtons(q, relayState).text}`, fill(body) {
+    if (q.tool && q.kind !== 'idle') body.append(mk('p', 'rd-k', '도구'), mk('p', 'rd-v', q.tool));
+    body.append(fillLinks(mk('p', 'rd-v'), q.text));
+    if (q.kind === 'idle' || q.kind === 'report') body.append(mk('p', 'rd-note', q.kind === 'idle' ? idleNote : '보고 본문이 기록되지 않았어요 (가림 모드이거나 이전 훅).'));
+    else { const w = whyNoButtons(q, relayState), n = mk('p', 'rd-note', w.text); if (w.inferred) { n.append(' '); const t = mk('span', 'est', '추정'); t.title = NOT_INSTALLED_TIP; n.append(t); } body.append(n); }
+  } };
+  return { label: '마지막 보고', decide: [], sig: 'none', fill(body) { body.append(mk('p', 'rd-note', '아직 보고가 없어요.')); } };
+}
+function setMode(mode) {
+  reader.mode = mode;
+  $('rd-card').hidden = mode !== 'card'; $('rd-list').hidden = mode !== 'list';
+  $('rd-back').hidden = !(mode === 'card' && reader.fromList);
+  reader.sig = {};
+}
+/** Paint the card view from parts (only the pieces whose content changed; never while typing a reason). */
+function paintCard(p) {
+  const head = $('rd-head'), act = $('rd-act'), sig = reader.sig;
+  if (sig.head !== p.head) { sig.head = p.head; head.innerHTML = p.head; }   // cardParts: every log string is esc()'d
+  const rd = readingOf(p);
+  if (sig.read !== rd.sig) {
+    sig.read = rd.sig; reader.body = p.body;
+    const body = $('rd-body'), dl = $('rd-dl'), keep = body.scrollTop;
+    body.replaceChildren(); dl.replaceChildren(); rd.fill(body);
+    for (const l of rd.decide) dl.append(fillLinks(mk('p'), l));
+    $('rd-decide').hidden = !rd.decide.length; $('rd-lbl').textContent = rd.label; body.setAttribute('aria-label', rd.label);
+    body.scrollTop = keep;
+  }
+  const actHTML = `${p.q?.relay ? relayHTML(p.q.relay) : p.insOff || ''}<div class="btns">${p.btns.replace(READ_BTN, '')}${p.body ? COPYALL_BTN : ''}${p.c ? FOCUS_BTN : ''}</div>`;
+  // Never repaint under the reason field while typing, unless the relay status changed (sending / answered / expired):
+  // then repaint and put the reason text and caret back. Checkboxes and buttons repaint as usual.
+  const typing = typingIn(act), st = p.q?.relay?.status || '';
+  if (sig.act !== actHTML && (!typing || sig.st !== st)) {
+    const caret = typing && inputState();
+    sig.act = actHTML; sig.st = st; act.innerHTML = actHTML;
+    restoreInput(act, caret);
+  }
+  cardLive($('rd-card'), p);
+}
+function freezeCard() {
+  reader.past = true;
+  $('rd-past').textContent = reader.body ? '지난 보고' : '지난 요청'; $('rd-past').hidden = false;
+  const act = $('rd-act'); act.replaceChildren(mk('p', 'rl-left', '대표실 줄에서 나갔어요. 마지막으로 받은 내용이에요.'));
+  if (reader.body) { const d = mk('div', 'btns'); d.innerHTML = COPYALL_BTN; act.append(d); }
+  for (const n of $('rd-head').querySelectorAll('.live-wait, .live-elapsed')) if (!n.textContent) n.textContent = '—';
+  reader.sig.act = null;
+}
+function showReader(opener) {
+  const el = $('reader');
+  if (!reader.open) reader.opener = opener || document.activeElement;
+  reader.open = true;
+  el.style.setProperty('--rd-fs', `${readerSize()}px`);
+  el.hidden = false;
+  requestAnimationFrame(() => el.querySelector(reader.mode === 'list' ? '#rd-tbody tr, [data-r="close"]' : '[data-r="close"]')?.focus({ preventScroll: true }));
+}
+function openReader(src, key, sid, opener, fromList = false) {
+  const p = cardParts(src, key, src === 'q' ? lastList.find(x => x.key === key)?.sid : sid);
+  if (!p) return;
+  Object.assign(reader, { src, key, sid: p.sid, since: p.since, body: p.body, past: false, fromList });
+  setMode('card');
+  $('rd-t').textContent = '크게 보기'; $('rd-sub').textContent = readerSub(p); $('rd-past').hidden = true;
+  paintCard(p);
+  $('rd-body').scrollTop = 0;
+  showReader(opener);
+}
+/** Subtitle, computed once at open time (who · floor · session) and kept even after the source moves on. */
+function readerSub(p) {
+  if (p.q) return `${displayName(whoOf(p.q))} · ${floorLabel(p.q.proj)} · 세션 ${p.q.sid.slice(0, 4)}`;
+  const proj = Object.values(state.floors).find(f => Object.values(f.rooms).some(r => r.sid === p.sid))?.proj;
+  return [displayName(p.c), proj ? floorLabel(proj) : null, p.sid ? `세션 ${p.sid.slice(0, 4)}` : null].filter(Boolean).join(' · ');
+}
+function openList(opener, { sid = null } = {}) {
+  const L = reader.list;
+  L.shown = new Set(lastList.map(q => q.key)); L.confirm = false; L.html = ''; L.sid = sid;
+  reader.fromList = false; reader.past = false; $('rd-past').hidden = true; $('rd-sub').textContent = '';
+  setMode('list');
+  paintList();
+  $('rd-tw').scrollTop = 0;
+  showReader(opener);
+}
+function backToList() {
+  const L = reader.list, key = reader.key;
+  reader.fromList = false; reader.past = false; $('rd-past').hidden = true; $('rd-sub').textContent = '';
+  setMode('list'); L.html = ''; paintList();
+  $('rd-tw').scrollTop = L.scroll;
+  requestAnimationFrame(() => ($('rd-tbody').querySelector(`tr[data-key="${CSS.escape(key || '')}"]`) || $('reader').querySelector('[data-r="close"]'))?.focus({ preventScroll: true }));
+}
+const SORT_KO = { at: '온 시각', wait: '기다린 시간', kind: '종류', proj: '프로젝트', who: '누가', text: '내용' };
+function listRows() {
+  const L = reader.list;
+  L.sel = pruneSel(L.sel, lastList);                                     // resolved rows drop out of the selection
+  const opts = { sort: L.sort, filter: L.filter, sid: L.sid || null, now: Date.now(), nameOf: q => displayName(whoOf(q)), projOf: q => floorLabel(q.proj) };
+  let t = ceoTable(lastList, { ...opts, shown: L.shown });
+  if (!t.rows.length && t.fresh) { for (const q of lastList) L.shown.add(q.key); t = ceoTable(lastList, { ...opts, shown: L.shown }); }   // nothing to jump from
+  return t;
+}
+function paintList() {
+  const L = reader.list, { rows, fresh } = listRows(), tw = $('rd-tw');
+  $('rd-t').textContent = `대표실 대기 ${lastList.length}`;
+  for (const b of $('rd-list').querySelectorAll('[data-f]')) b.setAttribute('aria-pressed', String(b.dataset.f === L.filter));
+  const chip = $('rd-sidchip');                             // one session (opened from a 대표실 group): removable chip
+  chip.hidden = !L.sid;
+  if (L.sid) {
+    const mine = lastList.filter(q => q.sid === L.sid), proj = mine[0]?.proj;
+    const txt = `${proj ? `${floorLabel(proj)} · ` : ''}세션 ${L.sid.slice(0, 4)} · ${mine.length}건`;
+    const lbl = chip.querySelector('span'); if (lbl.textContent !== txt) lbl.textContent = txt;
+  }
+  const st = selState(L.sel, rows);
+  const th = `<tr><th class="ck"><input type="checkbox" data-s="all" aria-label="보이는 행 모두 선택" ${st === 'all' ? 'checked' : ''}></th>${LIST_COLS.map(c => {
+    const on = L.sort.col === c, dir = L.sort.dir === 'asc' ? 'ascending' : 'descending';
+    return `<th class="c-${c}" aria-sort="${on ? dir : 'none'}"><button type="button" data-sort="${c}">${SORT_KO[c]}${on ? (L.sort.dir === 'asc' ? ' ▲' : ' ▼') : ''}</button></th>`;
+  }).join('')}</tr>`;
+  if ($('rd-thead')._h !== th) { $('rd-thead')._h = th; $('rd-thead').innerHTML = th; }
+  const all = $('rd-thead').querySelector('[data-s="all"]'); if (all) all.indeterminate = st === 'some';
+  // The wait cell ticks every second: it is filled below with textContent and is not part of the compared HTML, so a
+  // ticking clock never replaces the rows (clicks and focus survive).
+  const body = rows.map(r => `<tr tabindex="0" data-key="${esc(r.key)}" data-dk="${esc(r.dkey)}" class="k-${r.kind}${L.sel.has(r.dkey) ? ' sel' : ''}" aria-selected="${L.sel.has(r.dkey)}">
+    <td class="ck"><input type="checkbox" data-s="row" aria-label="선택" ${L.sel.has(r.dkey) ? 'checked' : ''}></td><td class="c-at mono">${esc(clock(r.at))}</td><td class="c-wait mono" data-at="${r.at}"></td>
+    <td class="c-kind"><i class="kd k-${r.kind}"></i>${esc(r.label)}</td><td class="c-proj">${esc(r.proj)}</td><td class="c-who">${esc(r.who)}</td><td class="c-text" title="${esc(r.text)}">${esc(r.text)}</td></tr>`).join('');
+  if (L.html !== body) {
+    const fk = document.activeElement?.closest?.('#rd-tbody tr')?.dataset.key, fck = document.activeElement?.dataset?.s === 'row';
+    const keep = tw.scrollTop;
+    L.html = body; $('rd-tbody').innerHTML = body; tw.scrollTop = keep;
+    if (fk) { const tr = $('rd-tbody').querySelector(`tr[data-key="${CSS.escape(fk)}"]`); (fck ? tr?.querySelector('input') : tr)?.focus({ preventScroll: true }); }
+  }
+  const now = Date.now();
+  for (const td of $('rd-tbody').querySelectorAll('td.c-wait')) { const v = fmtDur(Math.max(0, now - Number(td.dataset.at))); if (td.textContent !== v) td.textContent = v; }
+  $('rd-empty').hidden = rows.length > 0; $('rd-empty').textContent = L.filter === 'need' && lastList.length ? '답이 필요한 요청이 없어요' : '대기 중인 요청이 없어요';
+  const fb = $('rd-fresh'); fb.hidden = !fresh; if (fresh) fb.textContent = `새 요청 ${fresh}건 · 보기`;
+  paintSelBar(rows);
+}
+function paintSelBar(rows = listRows().rows) {
+  const L = reader.list, n = L.sel.size, bar = $('rd-selbar'), hid = selHidden(L.sel, rows);
+  bar.hidden = !n; if (!n) { L.confirm = false; bar._h = ''; return; }
+  const high = selHigh(L.sel, lastList);
+  const html = L.confirm
+    ? `<span class="rd-warn">승인·질문 ${high}건은 터미널에서 여전히 기다려요. 돌려보낼까요?</span><button type="button" class="chipbtn no" data-s="go">돌려보내기</button><button type="button" class="chipbtn" data-s="cancel">취소</button>`
+    : `<b>${n}건 선택</b>${hid ? `<small class="rd-hid">숨은 ${hid}건 포함</small>` : ''}<button type="button" class="chipbtn" data-s="send" title="결정 없이 대시보드에서만 치워요. 승인·질문은 터미널에서 계속 받을 수 있어요">돌려보내기</button><button type="button" class="chipbtn ghost" data-s="clear">선택 해제</button>`;
+  if (bar._h !== html) { bar._h = html; bar.innerHTML = html; }
+}
+async function bulkSendBack() {
+  const L = reader.list, picked = selEntries(L.sel, lastList);
+  L.sel = new Set(); L.confirm = false;
+  if (picked.length) { await sendBack(picked); toast(`${picked.length}건을 돌려보냈어요 · 승인·질문은 터미널에서 계속 받을 수 있어요`); }
+  L.html = ''; paintList();
+}
+function closeReader() {
+  if (!reader.open) return;
+  reader.open = false; $('reader').hidden = true; reader.list.confirm = false;
+  // Focus goes back to what opened it; if that re-rendered or closed: the 대표실 figure, the 대표실 header, the theme button.
+  // (Characters in the scene are not focusable, so a character-card drawer falls back to the header.)
+  const live = el => el && el !== document.body && el.isConnected && !el.closest('[hidden]') && !el.disabled && el.getClientRects().length > 0;
+  const back = [reader.opener, !$('pop').hidden && $('pop').querySelector('[data-a="read"]'), (reader.mode === 'list' ? figFor(null, reader.list.sid)?.el : reader.src === 'q' && figFor(reader.key, reader.sid)?.el), $('ceo-boss'), $('ceo-h'), $('theme')].find(live);
+  try { back?.focus?.({ preventScroll: true }); } catch { /* gone */ }
+  reader.opener = null;
+}
+/** Called every frame / second (force: after an answer). ?read=1 opens the first report card, ?list=1 the list. */
+function renderReader(force) {
+  if (!reader.open) {
+    if (reader.autoList && ui.live) { reader.autoList = false; openList(null); return; }
+    if (!reader.auto) return;
+    const q = lastList.find(x => x.kind === 'report' && x.asks && x.body) || lastList.find(x => x.kind === 'report' && x.body);
+    if (q) { reader.auto = false; openReader('q', q.key, q.sid, null); }
+    return;
+  }
+  if (reader.mode === 'list') { paintList(); return; }
+  if (reader.past) return;                                  // frozen: a past card never comes back to life
+  const same = readerSame({ sid: reader.sid, since: reader.since }, readerSource(reader.src, reader.key));
+  const p = same ? cardParts(reader.src, reader.key, reader.sid) : null;
+  if (!p) { freezeCard(); return; }
+  if (force) reader.sig.act = null;
+  paintCard(p);
+}
+bindCardInputs($('rd-act'), () => (reader.src === 'q' && !reader.past ? lastList.find(x => x.key === reader.key)?.relay : null));
+$('rd-act').addEventListener('click', ev => {
+  if (reader.past) {                                        // frozen card: only 전체 복사 is left
+    if (ev.target.closest('[data-a="copyall"]')) navigator.clipboard.writeText(reader.body).then(() => toast('보고 전체를 복사했어요'), () => toast('복사가 막혔어요. 보고를 직접 선택해 주세요'));
+    return;
+  }
+  cardClick(ev, { kind: reader.src, key: reader.key, sid: reader.sid, body: reader.body, done: () => (reader.fromList ? backToList() : closeReader()) });
+});
+$('reader').addEventListener('click', ev => {
+  const b = ev.target.closest('button[data-r]'); if (!b) return;
+  const a = b.dataset.r;
+  if (a === 'close') return closeReader();
+  if (a === 'back') return backToList();
+  if (a === 'smaller' || a === 'bigger') {
+    const i = READ_SIZES.indexOf(readerSize()), v = READ_SIZES[Math.max(0, Math.min(READ_SIZES.length - 1, i + (a === 'bigger' ? 1 : -1)))];
+    store.set('office.readerSize', String(v)); $('reader').style.setProperty('--rd-fs', `${v}px`);
+  }
+});
+// list mode: filter chips, sort headers, new-rows bar, rows (click / Enter), checkboxes (shift = range), bulk bar
+$('rd-list').addEventListener('click', ev => {
+  const L = reader.list, t = ev.target;
+  const f = t.closest('[data-f]'); if (f) { L.filter = f.dataset.f; L.html = ''; paintList(); return; }
+  if (t.closest('#rd-sidchip button')) { L.sid = null; L.html = ''; paintList(); $('rd-list').querySelector('[data-f="all"]')?.focus(); return; }
+  const so = t.closest('[data-sort]'); if (so) { L.sort = nextSort(L.sort, so.dataset.sort); L.html = ''; paintList(); return; }
+  if (t.closest('#rd-fresh')) { for (const q of lastList) L.shown.add(q.key); L.html = ''; paintList(); return; }
+  const sb = t.closest('#rd-selbar [data-s]');
+  if (sb) {
+    const a = sb.dataset.s;
+    if (a === 'clear') { L.sel = new Set(); L.html = ''; paintList(); }
+    else if (a === 'send') { if (selHigh(L.sel, lastList)) { L.confirm = true; paintSelBar(); $('rd-selbar').querySelector('[data-s="cancel"]')?.focus(); } else bulkSendBack(); }
+    else if (a === 'go') bulkSendBack();
+    else if (a === 'cancel') { L.confirm = false; paintSelBar(); }
+    return;
+  }
+  const ck = t.closest('input[data-s]');
+  if (ck) {
+    const { rows } = listRows();
+    if (ck.dataset.s === 'all') L.sel = selectRows(L.sel, rows, ck.checked);
+    else {
+      const d = ck.closest('tr').dataset.dk;
+      L.sel = ev.shiftKey && L.anchor ? selectRange(L.sel, rows, L.anchor, d, ck.checked) : selectRows(L.sel, rows.filter(r => r.dkey === d), ck.checked);
+      L.anchor = d;
+    }
+    L.confirm = false; L.html = ''; paintList();
+    return;
+  }
+  if (t.closest('td.ck')) return;                           // the checkbox cell's padding: not a row open
+  const tr = t.closest('#rd-tbody tr'); if (tr) openFromRow(tr);
+});
+$('rd-list').addEventListener('keydown', ev => {
+  const tr = ev.target.closest?.('#rd-tbody tr');
+  if (!tr || ev.target !== tr) return;
+  if (ev.key === 'Enter') { ev.preventDefault(); openFromRow(tr); }
+  else if (ev.key === ' ') { ev.preventDefault(); tr.querySelector('input[data-s="row"]')?.click(); }
+  else if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') { ev.preventDefault(); (ev.key === 'ArrowDown' ? tr.nextElementSibling : tr.previousElementSibling)?.focus(); }
+});
+function openFromRow(tr) {
+  const key = tr.dataset.key, q = lastList.find(x => x.key === key);
+  if (!q) return;
+  reader.list.scroll = $('rd-tw').scrollTop;
+  openReader('q', key, q.sid, null, true);
+}
+$('ceo-boss').addEventListener('click', ev => { ev.stopPropagation(); openList(ev.currentTarget); });
+// Keep Tab inside the drawer while it is open (focus returns to what opened it on close).
+$('reader').addEventListener('keydown', ev => {
+  if (ev.key !== 'Tab') return;
+  const f = [...$('reader').querySelectorAll('button, [href], input, [tabindex="0"]')].filter(x => !x.closest('[hidden]') && !x.disabled);
+  if (!f.length) return;
+  const first = f[0], last = f[f.length - 1];
+  if (ev.shiftKey && document.activeElement === first) { ev.preventDefault(); last.focus(); }
+  else if (!ev.shiftKey && document.activeElement === last) { ev.preventDefault(); first.focus(); }
+});
 
 // ---------------- panel ----------------
 const fmtDur = ms => {
@@ -1062,6 +1483,7 @@ function frame(now) {
     if (sceneDirty) { syncScene(sel.room); renderCeo(list); if (ui.overview) renderOverview($('overview'), overviewFloors()); sceneDirty = false; }
     if (bldDirty) { renderBuilding(k, list); bldDirty = false; }
     if (panelDirty && now - lastPanelAt > 250) { renderPanel(sel, k); panelDirty = false; lastPanelAt = now; }
+    renderReader();
   }
   renderTicker(now);
   const moving = move(now), anim = animate(now);

@@ -51,6 +51,7 @@ const realpath = p => { try { return fs.realpathSync(p); } catch { return path.r
 const isMain = !!process.argv[1] && realpath(process.argv[1]) === realpath(fileURLToPath(import.meta.url));
 const opt = isMain ? parseArgs(process.argv.slice(2)) : parseArgs([]);
 const log = (...a) => console.log(new Date().toISOString(), ...a);
+const STARTED_AT = Date.now();
 
 // ---------- usage + config ----------
 // building.json / pricing.json are user config and live OUTSIDE the code folder (a plugin update replaces it):
@@ -113,11 +114,14 @@ const visibleViewers = () => { let n = 0; for (const r of viewers) if (r.visible
  *  hook returns, so it waits only while a dashboard is actually on screen. */
 /** A raw request field for one log line: strings only, printable ASCII, bounded. */
 const logSafe = (v, n) => (typeof v === 'string' ? v.slice(0, n).replace(/[^\x20-\x7e]/g, '?') : '?');
+/** A Stop (instruct) holds the session like a question does (the terminal cannot take input while the Stop hook
+ *  waits), so it too waits only while a dashboard is on screen. */
 const canHold = kind => (kind === 'permission' ? viewers.size : visibleViewers()) > 0;
+const holdKind = raw => (raw?.hook_event_name === 'PermissionRequest' ? 'permission' : raw?.hook_event_name === 'Stop' ? 'instruct' : 'question');
 /** A closed tab is often a reload: wait this long for a dashboard to come back before releasing (env for tests). */
 const CLOSE_GRACE_MS = /^\d{1,6}$/.test(process.env.OFFICE_VIEWER_GRACE_MS || '') ? Number(process.env.OFFICE_VIEWER_GRACE_MS) : 5000;
 function releaseIfNoViewer(why) {
-  const n = viewers.size ? (visibleViewers() ? 0 : relay.releaseAll('no-viewer', 'question')) : relay.releaseAll('no-viewer');
+  const n = viewers.size ? (visibleViewers() ? 0 : relay.releaseAll('no-viewer', ['question', 'instruct'])) : relay.releaseAll('no-viewer');
   if (n) log(`대표실: ${why}, released ${n} pending`);
 }
 
@@ -131,8 +135,14 @@ const tokenOk = t => typeof t === 'string' && t.length === TOKEN.length && crypt
 
 /** Caller-process check (relay.mjs checkCaller). OFFICE_TEST_ANCESTRY="comm,comm,…" (child first) swaps in a fake
  *  process tree — tests only; the real check runs otherwise. */
-const peerRun = process.env.OFFICE_TEST_ANCESTRY ? fakeAncestryRunner(process.env.OFFICE_TEST_ANCESTRY.split(',')) : execRunner;
-const peerPlatform = process.env.OFFICE_TEST_ANCESTRY ? 'darwin' : process.platform;
+/** OFFICE_TEST_ANCESTRY is honoured ONLY under the node test runner: `node --test` sets NODE_TEST_CONTEXT in the
+ *  processes it runs, and the servers the suites spawn inherit it. A real start (start.sh, plugin, a shell) never has
+ *  it, so a stray variable cannot switch off the Claude-process-tree check (which now also guards instructions). */
+export const testAncestry = env => (env && env.OFFICE_TEST_ANCESTRY && env.NODE_TEST_CONTEXT ? String(env.OFFICE_TEST_ANCESTRY).split(',') : null);
+const fakeTree = testAncestry(process.env);
+const peerRun = fakeTree ? fakeAncestryRunner(fakeTree) : execRunner;
+const peerPlatform = fakeTree ? 'darwin' : process.platform;
+if (process.env.OFFICE_TEST_ANCESTRY && !fakeTree) log('대표실: OFFICE_TEST_ANCESTRY ignored (only honoured under the test runner); the real caller-process check runs');
 let peerFallbackLogged = false;
 /** Project names seen and alias -> project (launch-dir / cwd basename -> root name) for building.json keys. */
 const seenProj = new Set(), aliases = new Map();
@@ -272,12 +282,12 @@ class Tail {
   }
 }
 
-/** A ceo-decisions.jsonl line -> office event `RelayDecided` {sid, aid, tool, answer: allow|deny|answered}, only for
+/** A ceo-decisions.jsonl line -> office event `RelayDecided` {sid, aid, tool, answer: allow|deny|answered|instructed}, only for
  *  answers given in the dashboard. In the history, a page that reloads (or opens after a restart) sees the request as
  *  decided instead of bringing back a card with no buttons while the approved command is still running. */
 function decisionEvent(d) {
   if (!d || d.by !== 'dashboard' || !d.decision || typeof d.sid !== 'string') return null;
-  const answer = d.decision.behavior === 'allow' || d.decision.behavior === 'deny' ? d.decision.behavior : 'answered';
+  const answer = d.decision.behavior === 'allow' || d.decision.behavior === 'deny' ? d.decision.behavior : d.kind === 'instruct' ? 'instructed' : 'answered';
   return { ts: d.ts, ev: 'RelayDecided', sid: d.sid, ...(d.aid ? { aid: d.aid } : {}), ...(d.tool ? { tool: d.tool } : {}), ...(typeof d.proj === 'string' && d.proj ? { proj: d.proj } : {}), answer };
 }
 
@@ -289,7 +299,13 @@ function startLive() {
     // Live office-events lines tell the relay when the terminal answered first (or the session moved on).
     if (i === 0) for (const e of sorted) { try { relay.observe(norm(e)); } catch (err) { log('relay observe:', err.message); } }
   }));
-  byTs(tails.flatMap((t, i) => (i === 2 ? t.initial().map(decisionEvent).filter(Boolean) : t.initial()))).forEach(emit);
+  const inits = tails.map(t => t.initial());                // once: initial() advances each tail's offset
+  byTs(inits.flatMap((evs, i) => (i === 2 ? evs.map(decisionEvent).filter(Boolean) : evs))).forEach(emit);
+  // Today's endings without a decision (timeout, no viewer, hook gone) explain buttonless cards after a restart too.
+  for (const d of inits[2]) {
+    const at = tsMs(d), reason = d?.by === 'withdrawn' ? 'withdrawn' : d?.reason;
+    if (d && !d.decision && at >= dayStart()) relay.noteEnd({ sid: d.sid, aid: d.aid, tool: d.tool, kind: d.kind, reason, wait: Number(d.wait), at }, false);
+  }
   log(`replayed ${history.length} of today's events from ${opt.logs}`);
   const checkAll = () => tails.forEach(t => t.check());
   let watching = false;
@@ -396,7 +412,7 @@ async function handleEvents(req, res, url) {
   if (res.destroyed || res.writableEnded) return;
   const d0 = dayStart();
   sendBurst(res, opt.replay ? history : history.filter(e => tsMs(e) >= d0), true);
-  res.write(`event: ceo\ndata: ${JSON.stringify({ type: 'snapshot', items: relay.list() })}\n\n`);
+  res.write(`event: ceo\ndata: ${JSON.stringify({ type: 'snapshot', items: relay.list(), ends: relay.ends.filter(x => x.at >= d0), startedAt: STARTED_AT })}\n\n`);
   clients.add(res);
   if (isViewer(req)) {
     const vid = url.searchParams.get('vid');
@@ -450,6 +466,7 @@ async function dashboardGate(req, res, { decide = false } = {}) {
     return deny('agent processes cannot answer');
   }
   if (c.verdict === 'unknown') return deny(`could not verify the calling process (${c.detail})`);
+  req.callerVerdict = c.verdict;
   if (c.verdict === 'unchecked' && !peerFallbackLogged) {
     peerFallbackLogged = true;
     log(`대표실: caller-process check unavailable (${c.detail}); relying on Origin + token only`);
@@ -600,13 +617,19 @@ async function relayAsk(req, res, url, asHook) {
   const raw = await jsonBody(req, res, ASK_MAX);
   if (raw === undefined) return;
   const none = reason => sendJson(res, 200, asHook ? {} : { id: null, decision: null, reason });
-  if (!canHold(raw?.hook_event_name === 'PermissionRequest' ? 'permission' : 'question')) {
-    log(`대표실: ${logSafe(raw?.tool_name, 40)} (${logSafe(raw?.session_id, 8)}) not relayed: ${viewers.size ? 'dashboard in the background' : 'no dashboard open'}`);
+  if (holdKind(raw) === 'instruct' && peerPlatform !== 'darwin') {   // no caller-process check here: no instructions
+    try { relay.skip(raw, 'unchecked'); } catch { /* bookkeeping only */ }
+    return none('unchecked');
+  }
+  if (!canHold(holdKind(raw))) {
+    try { relay.skip(raw, viewers.size ? 'hidden' : 'no-viewer'); } catch { /* bookkeeping only */ }
+    log(`대표실: ${logSafe(raw?.hook_event_name === 'Stop' ? 'Stop' : raw?.tool_name, 40)} (${logSafe(raw?.session_id, 8)}) not relayed: ${viewers.size ? 'dashboard in the background' : 'no dashboard open'}`);
     return none('no-viewer');
   }
   const alive = () => !res.destroyed && !res.writableEnded && !!res.socket && !res.socket.destroyed && res.socket.writable;
   const r = relay.ask(raw, parseWait(url.searchParams.get('waitMs')), { alive });
   if (r.error) return asHook ? none(r.error) : sendJson(res, r.status, { error: r.error });
+  if (r.none) return none(r.none);                       // e.g. a Stop whose report does not ask: no hold, no log
   res.on('close', () => { if (!res.writableFinished) relay.withdraw(r.id); });
   const { decision, by } = await r.wait;
   if (asHook) sendJson(res, 200, hookOutput(r.item.kind, r.toolInput, decision));
@@ -618,9 +641,12 @@ async function relayAnswer(req, res) {
   const b = await jsonBody(req, res, ANSWER_BODY_MAX);
   if (b === undefined) return;
   if (!b || typeof b !== 'object' || Array.isArray(b)) return sendJson(res, 400, { error: 'body must be {id, decision}' });
+  // An instruction becomes the session's next input: never without the caller-process check (non-macOS / tools missing).
+  if (req.callerVerdict === 'unchecked' && typeof b.id === 'string' && relay.pending.get(b.id)?.item.kind === 'instruct')
+    return sendJson(res, 403, { error: 'dashboard instructions need the caller-process check (macOS lsof/ps); answer in the terminal' });
   const r = relay.answer(b.id, b.decision);
   if (r.status !== 200) return sendJson(res, r.status, { error: r.error });
-  log(`대표실: ${r.item.kind} ${r.item.tool} ${r.decision.behavior || 'answered'} (${r.item.sid.slice(0, 8)})`);
+  log(`대표실: ${r.item.kind} ${r.item.tool} ${r.decision.behavior || (r.item.kind === 'instruct' ? 'instructed' : 'answered')} (${r.item.sid.slice(0, 8)})`);
   sendJson(res, 200, { ok: true, id: b.id, decision: r.decision });
 }
 

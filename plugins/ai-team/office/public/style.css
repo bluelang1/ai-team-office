@@ -141,6 +141,9 @@ button { font: inherit; color: inherit; }
 .stage { --s: 2; position: relative; max-width: 100%; }
 .scene { position: relative; width: 832px; height: 688px; overflow: hidden; background: var(--paper); box-shadow: var(--px); contain: layout; }
 .stage.ov .scene { visibility: hidden; }
+/* 전체 보기: the 대표실 corner belongs to the office scene; hide it (and its hit areas) instead of drawing it over the grid.
+   대표님 호출 in the header and the list drawer keep working. */
+.stage.ov .ceo-room { display: none !important; }
 .scene canvas.world { position: absolute; inset: 0; width: 100%; height: 100%; image-rendering: pixelated; }
 .labels { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
 .rlab { position: absolute; display: inline-flex; align-items: center; gap: 3px; padding: 1px 6px 1px 3px; font-size: 11.5px; font-weight: 700; line-height: 16px;
@@ -260,7 +263,9 @@ button { font: inherit; color: inherit; }
 /* the 대표 faces left (toward the door), back to the right wall. His executive chair is drawn in the same canvas (sprites.js
    drawExec: backrest behind him, armrest in front); away = chair only. The side-view desk starts right at his knees
    (ceo.js CEO_PLAN: chair r 5-9, knee r 20, desk r 21-48; hands rest on the laptop at desk height). */
-.ceo-boss { position: absolute; right: calc(1px * var(--s)); bottom: calc(9px * var(--s)); width: calc(24px * var(--s)); height: calc(32px * var(--s)); z-index: 2; }
+.ceo-boss { position: absolute; right: calc(1px * var(--s)); bottom: calc(9px * var(--s)); width: calc(24px * var(--s)); height: calc(32px * var(--s)); z-index: 2;
+  border: 0; padding: 0; margin: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
+.ceo-boss:hover .boss { filter: brightness(1.12); }
 .ceo-boss .boss { width: 100%; height: 100%; image-rendering: pixelated; transform: scaleX(-1); display: block; }
 .ceo-boss .ceo-tag { top: calc(100% + 2px); --m: #2c3e70; font-weight: 700; }
 .ceo-desk { position: absolute; right: calc(21px * var(--s)); bottom: calc(9px * var(--s)); width: calc(27px * var(--s)); height: calc(12px * var(--s)); pointer-events: none; z-index: 1; }
@@ -306,7 +311,11 @@ button { font: inherit; color: inherit; }
 @keyframes warp { 0% { opacity: 0; transform: scaleY(.1); } 60% { opacity: 1; transform: scaleY(1.1); } }
 @keyframes sparkle { 0% { opacity: 1; transform: scale(.3); } 100% { opacity: 0; transform: scale(1.6); } }
 @keyframes qout { 60% { opacity: 1; } 100% { opacity: 0; transform: translateY(6px); } }
-.qmore { position: absolute; right: calc((var(--qr, 120) - 6) * 1px * var(--s)); bottom: calc(12px * var(--s)); background: var(--ink); color: var(--bg); padding: 0 5px; font-size: 11px; font-weight: 700; }
+/* +N: a real button by the door (ceo.js ceoMore puts its right edge a few units clear of the last figure) */
+.qmore { position: absolute; right: calc(var(--qr, 120) * 1px * var(--s)); bottom: calc(14px * var(--s)); min-width: 34px; min-height: 32px; padding: 0 7px; border: 0;
+  background: var(--ink); color: var(--bg); font: 800 13px/32px var(--font); box-shadow: var(--px-thin), 3px 3px 0 0 var(--hard); cursor: pointer; pointer-events: auto; z-index: 3; }
+.qmore:hover { background: var(--fable); color: var(--fable-ink); }
+.qmore:focus-visible, .ceo-boss:focus-visible { outline: 2px solid var(--fable); outline-offset: 2px; }
 
 /* ---------- overview (전체 보기) ---------- */
 .overview { position: absolute; inset: 0; z-index: 10; background: var(--tx-brick) 0 0 / 32px; box-shadow: var(--px); padding: 10px 10px 10px; overflow: auto; }
@@ -456,6 +465,61 @@ button { font: inherit; color: inherit; }
 .card-pop .report { margin: 0 0 8px; padding: 6px 8px; background: var(--cream); color: var(--ink); box-shadow: var(--px-thin); white-space: pre-wrap; overflow-wrap: anywhere;
   line-height: 1.55; max-height: 240px; overflow: auto; overscroll-behavior: contain; }
 .card-pop .report:focus-visible { outline: 2px solid var(--fable); outline-offset: 1px; }
+.card-pop header .tags { display: inline-flex; gap: 4px; align-items: center; }
+/* 추정 tag: the report's wording made us think it asks the 대표 (inferred, not observed) */
+.est { font-size: 10.5px; padding: 0 5px; font-weight: 700; color: var(--inferred); box-shadow: inset 0 0 0 1px var(--inferred); white-space: nowrap; }
+/* 크게 보기 drawer: a whole card (or the 대표실 list) on the right; the office scene stays visible on its left */
+.reader { position: fixed; top: 0; right: 0; bottom: 0; z-index: 95; width: min(600px, 100vw); background: var(--card); color: var(--ink);
+  display: flex; flex-direction: column; padding: 0 12px 12px; animation: rd-in .18s ease-out; --rd-fs: 15px; }
+@keyframes rd-in { from { transform: translateX(100%); } }
+.reader .chest-h { margin: 0 -12px 8px; flex-wrap: wrap; }
+.reader .chest-h .sub { flex: 1; }
+.rd-card, .rd-list { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.rd-head header { display: flex; align-items: center; gap: 6px; justify-content: space-between; margin-bottom: 6px; font-size: 14px; }
+.rd-head header .tags { display: inline-flex; gap: 4px; align-items: center; }
+.rd-head dl { display: grid; grid-template-columns: 80px 1fr; gap: 3px 8px; margin: 0 0 8px; font-size: 12.5px; }
+.rd-head dt { color: var(--muted); } .rd-head dd { margin: 0; min-width: 0; overflow-wrap: anywhere; } .rd-head small { color: var(--muted); }
+.rd-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-bottom: 6px; }
+.rd-tools .rd-lbl { font-weight: 700; font-size: 12.5px; }
+.rd-gap { flex: 1; }
+.rd-decide { margin: 0 0 8px; padding: 8px 10px; background: color-mix(in srgb, var(--butter) 35%, var(--card)); box-shadow: var(--px-thin); font-size: var(--rd-fs); line-height: 1.55; }
+.rd-decide .rd-dh { margin: 0 0 4px; font-size: 12px; display: flex; align-items: center; gap: 6px; }
+.rd-decide p { margin: 0; overflow-wrap: anywhere; } .rd-decide #rd-dl p { font-weight: 700; }
+.rd-body { flex: 1; min-height: 80px; overflow: auto; overscroll-behavior: contain; padding: 10px 12px; background: var(--cream); box-shadow: var(--px-thin);
+  font-size: var(--rd-fs); line-height: 1.7; overflow-wrap: anywhere; }
+.rd-body p { margin: 0; } .rd-body .rd-sp { height: .7em; }
+.rd-body ul { margin: 0 0 .4em; padding-left: 1.3em; } .rd-body li { margin: .1em 0; }
+.rd-body .rd-k { color: var(--muted); font-size: .8em; margin-top: .4em; } .rd-body .rd-v { font-weight: 700; }
+.rd-body .rd-code { margin: .2em 0; padding: 6px 8px; background: #1b1830; color: #fff3c4; font: .92em/1.5 ui-monospace, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.rd-body .rd-qh { font-weight: 700; margin-top: .3em; } .rd-body .rd-note { color: var(--muted); font-size: .85em; margin-top: .6em; }
+.rd-act { margin-top: 8px; max-height: 45vh; overflow: auto; }
+.rd-act .btns { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; margin-top: 6px; }
+.rd-act .rl .btns { justify-content: flex-start; }
+.reader a { color: var(--opus); text-decoration: underline; }
+.rd-body:focus-visible, .reader:focus-visible, .rd-tbl tr:focus-visible { outline: 2px solid var(--fable); outline-offset: -2px; }
+/* list mode */
+.rd-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-bottom: 6px; }
+.rd-hint { font-size: 11px; color: var(--muted); }
+.rd-selbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 6px; padding: 4px 8px; background: var(--head); box-shadow: var(--px-thin); font-size: 12.5px; }
+.rd-selbar .rd-warn { flex: 1 1 220px; color: var(--ink); font-weight: 700; }
+.rd-fresh { display: block; width: 100%; margin: 0 0 6px; padding: 5px 8px; border: 0; background: var(--fable); color: var(--fable-ink); font: 700 12.5px var(--font); cursor: pointer; box-shadow: var(--px-thin); }
+.rd-tw { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; background: var(--cream); box-shadow: var(--px-thin); }
+.rd-tbl { width: 100%; border-collapse: collapse; font-size: 12.5px; table-layout: fixed; }
+.rd-tbl th { position: sticky; top: 0; z-index: 1; background: var(--head); color: var(--head-ink); text-align: left; padding: 0; border-bottom: 2px solid var(--edge); white-space: nowrap; }
+.rd-tbl th button { width: 100%; border: 0; background: none; padding: 5px 6px; text-align: left; font: 700 12px var(--font); cursor: pointer; color: inherit; }
+.rd-tbl th button:hover { background: var(--sand); }
+.rd-tbl td { padding: 5px 6px; border-bottom: 1px solid var(--line); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rd-tbl tr[data-key] { cursor: pointer; } .rd-tbl tr[data-key]:hover { background: color-mix(in srgb, var(--sand) 55%, transparent); }
+.rd-tbl tr.sel { background: color-mix(in srgb, var(--lav) 45%, transparent); }
+.rd-tbl .ck { width: 30px; text-align: center; } .rd-tbl th.ck { padding: 5px 0; }
+.rd-tbl .c-at { width: 74px; } .rd-tbl .c-wait { width: 78px; } .rd-tbl .c-kind { width: 92px; } .rd-tbl .c-proj { width: 96px; } .rd-tbl .c-who { width: 104px; }
+.kd { display: inline-block; width: 8px; height: 8px; margin-right: 5px; vertical-align: 0; box-shadow: 0 0 0 1px var(--edge); }
+.kd.k-perm { background: var(--red); } .kd.k-ask { background: var(--amber); } .kd.k-decide { background: var(--inferred); } .kd.k-report { background: var(--ok); } .kd.k-idle { background: var(--stale); }
+.rd-empty { margin: 0; padding: 24px 12px; text-align: center; color: var(--muted); }
+@media (max-width: 760px) {
+  .reader { width: 100vw; padding: 0 8px 8px; } .reader .chest-h { margin: 0 -8px 8px; }
+  .rd-tbl .c-proj, .rd-tbl .c-who { display: none; } .rd-tbl .c-at { width: 64px; } .rd-tbl .c-wait { width: 64px; } .rd-tbl .c-kind { width: 80px; }
+}
 .prio { font-size: 10.5px; padding: 0 5px; font-weight: 700; } .prio.high { background: var(--red); color: var(--red-ink); } .prio.low { background: var(--line); }
 .tip { position: fixed; left: 0; top: 0; z-index: 200; pointer-events: none; background: #1b1830; color: #fff3c4; padding: 3px 7px; font-size: 11.5px; max-width: 300px; box-shadow: var(--px-thin); }
 .toast { position: fixed; left: 50%; bottom: 64px; transform: translateX(-50%); z-index: 150; background: #1b1830; color: #fff3c4; padding: 6px 12px; box-shadow: var(--px); font-size: 12.5px; }
@@ -555,3 +619,25 @@ label.opt { flex-direction: row; align-items: center; gap: 5px; } .opt:disabled,
 .rl-st.st-answered { background: color-mix(in srgb, var(--ok) 25%, var(--card)); } .rl-st.st-expired { background: color-mix(in srgb, var(--amber) 30%, var(--card)); }
 .qf.can .qn::after { content: " ✋"; }
 .char.boss .obs, .char.boss .pips { display: none; }
+.rd-selbar .rd-hid { color: var(--muted); font-size: 11.5px; }
+/* instruct card (hooks/ceo-stop.sh): send the next instruction to a session whose report asks */
+.rl-ins { padding: 6px 8px; background: var(--cream); box-shadow: var(--px-thin); }
+.rl-ins .rl-h { margin: 0; display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 12.5px; }
+.ins-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.ins-chips .opt { font-size: 11.5px; }
+.rl-ins .ins { width: 100%; min-height: 64px; resize: vertical; font: inherit; font-size: 13px; line-height: 1.5; padding: 5px 7px; border: 0; background: var(--card); color: var(--ink); box-shadow: inset 0 0 0 2px var(--line); }
+.rl-ins .ins:focus-visible { outline: 2px solid var(--fable); outline-offset: 1px; }
+.reader .rl-ins .ins { min-height: 96px; font-size: var(--rd-fs); }
+.ins-off { color: var(--muted); font-style: italic; }
+/* 대표실 groups (only when the line overflows): ×N badge, red when any member needs an answer; one pulse on a join */
+.qf .qx { position: absolute; top: -2px; right: -6px; z-index: 5; min-width: 20px; padding: 0 4px; font: 800 11px/16px var(--font); text-align: center;
+  background: var(--ink); color: var(--bg); box-shadow: 0 0 0 1px var(--edge); pointer-events: none; }
+.qf .qx.hot { background: var(--red); color: var(--red-ink); }
+.qf .qx.pulse { animation: qxpulse .6s steps(4) 1; }
+@keyframes qxpulse { 50% { transform: scale(1.45); } }
+.rd-sidchip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 8px; background: var(--lav); color: var(--ink); font-size: 12px; box-shadow: var(--px-thin); }
+.rd-sidchip button { border: 0; background: none; color: inherit; cursor: pointer; font: 700 12px var(--font); padding: 0 4px; min-width: 24px; min-height: 22px; }
+.rd-sidchip button:hover { background: var(--sand); }
+/* 터미널에서 답할게요 (hand the prompt to the terminal now; the card stays) vs 돌려보내기 (ghost: hide from the dashboard) */
+.chipbtn.term { background: var(--card); color: var(--opus); box-shadow: inset 0 0 0 2px var(--opus), 3px 3px 0 0 var(--hard); font-weight: 700; }
+.chipbtn.term:hover { background: color-mix(in srgb, var(--opus) 14%, var(--card)); }

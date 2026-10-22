@@ -1,6 +1,8 @@
 // AI Team Office v2 — simulator extras (only with ?sim=1). Everything here is fake and labelled as such in the UI:
-// a demo building, made-up token usage, and two extra floors whose characters end up waiting in 대표실
-// (one AskUserQuestion from a subagent, one PermissionRequest from a main session).
+// a demo building, made-up token usage, and extra sessions whose characters end up waiting in 대표실: an
+// AskUserQuestion from a subagent, PermissionRequests from a main session and from a subagent, a long final report
+// ending with a '다음 결정' line (결정 대기 / 추정, fills the 크게 보기 drawer), a short plain report and an idle
+// session — enough people (≥ 6 with the fixture) that the line overflows into the +N button.
 
 export const DEMO_BUILDING = {
   floors: { AI_Team: { floor: 9, label: 'AI 팀 사무실' }, 'shop-backend-app': { floor: 1, label: '쇼핑 백엔드' },
@@ -45,7 +47,18 @@ export function usageFor(e) {
 }
 
 // Extra floors. [ms at speed 1, event]
-const B = 'b7c1e2d3-0000-4000-8000-00000000000b', C = 'c3d4e5f6-0000-4000-8000-00000000000c';
+const E = 'e1f2a3b4-0000-4000-8000-00000000000e', F = 'f5a6b7c8-0000-4000-8000-00000000000f', G = 'a9b8c7d6-0000-4000-8000-000000000007';
+const REV = 'arev3c4d5e6f7a8b9', LOOK2 = 'alk2b3c4d5e6f7a8b', DEV2 = 'adv2c3d4e5f6a7b8c';
+const B = 'b7c1e2d3-0000-4000-8000-00000000000b', C = 'c3d4e5f6-0000-4000-8000-00000000000c', D = 'd8e9f0a1-0000-4000-8000-00000000000d';
+const REPORT = [
+  '## 재고 동기화 배치 점검 결과', '',
+  '한 일', '- 재고 동기화 배치의 재시도 로직을 고쳤어요 (중복 차감 방지)', '- 단위 테스트 12개 추가, 전체 통과',
+  '  - 동시성 테스트는 스테이징에서만 돌려요', '- PR 을 올렸어요: https://github.com/example/shop-backend-oms/pull/23', '',
+  '근거', '- `./gradlew test` 결과: 214 passed, 0 failed', '- 스테이징 리허설 로그: https://example.com/logs/oms-batch-1022', '',
+  '안 한 것', '- 운영 배포 (사람 승인 필요)', '- 오래된 재고 스냅샷 정리', '',
+  '막힌 것', '- 없음', '',
+  '**다음 결정**: PR #23을 오늘 머지할지 정해 주세요.',
+].join('\n');
 const DEV = 'adev0c1d2e3f4a5b6', LOOK = 'alook7a8b9c0d1e2f';
 const SCRIPT = [
   [0, { ev: 'SessionStart', sid: B, proj: 'shop-backend-app' }],
@@ -66,6 +79,28 @@ const SCRIPT = [
   [11000, { ev: 'PreToolUse', sid: C, proj: 'web-ui', tool: 'Bash', effort: 'medium', target: 'git push origin main' }],
   [12000, { ev: 'PermissionRequest', sid: C, proj: 'web-ui', tool: 'Bash', effort: 'medium', target: 'git push origin main',
     ask: 'Bash git push origin main' }],
+  [200, { ev: 'SessionStart', sid: D, proj: 'shop-backend-oms' }],
+  [700, { ev: 'UserPromptSubmit', sid: D, proj: 'shop-backend-oms', prompt: '재고 동기화 배치 고치고 보고해줘' }],
+  [2000, { ev: 'PreToolUse', sid: D, proj: 'shop-backend-oms', tool: 'Bash', effort: 'high', target: './gradlew test' }],
+  [6000, { ev: 'PostToolUse', sid: D, proj: 'shop-backend-oms', tool: 'Bash' }],
+  [14000, { ev: 'Stop', sid: D, proj: 'shop-backend-oms', effort: 'high', msg: REPORT }],
+  // session D also has two subagents waiting: with the line overflowing, D stands as ONE figure ×3 (red: HIGH inside)
+  [2500, { ev: 'SubagentStart', sid: D, proj: 'shop-backend-oms', aid: LOOK2, atype: 'lookup' }],
+  [3000, { ev: 'SubagentStart', sid: D, proj: 'shop-backend-oms', aid: DEV2, atype: 'backend-dev' }],
+  [8000, { ev: 'PreToolUse', sid: D, proj: 'shop-backend-oms', aid: LOOK2, atype: 'lookup', tool: 'AskUserQuestion', target: '스냅샷 정리 범위',
+    ask: '오래된 재고 스냅샷을 30일 기준으로 지울까요, 90일 기준으로 지울까요?' }],
+  [15500, { ev: 'PermissionRequest', sid: D, proj: 'shop-backend-oms', aid: DEV2, atype: 'backend-dev', tool: 'Bash', target: './gradlew build',
+    ask: 'Bash ./gradlew build' }],
+  [300, { ev: 'UserPromptSubmit', sid: E, proj: 'web-ui', prompt: '변경 사항 리뷰해줘' }],
+  [1200, { ev: 'PreToolUse', sid: E, proj: 'web-ui', tool: 'Agent', effort: 'high', target: '변경 리뷰',
+    sub: { type: 'code-reviewer', model: 'sonnet', effort: 'medium', desc: '변경 리뷰' } }],
+  [1800, { ev: 'SubagentStart', sid: E, proj: 'web-ui', aid: REV, atype: 'code-reviewer' }],
+  [15000, { ev: 'PermissionRequest', sid: E, proj: 'web-ui', aid: REV, atype: 'code-reviewer', tool: 'WebFetch', target: 'https://example.com/docs/release-notes',
+    ask: 'WebFetch https://example.com/docs/release-notes' }],
+  [400, { ev: 'UserPromptSubmit', sid: F, proj: 'shop-backend-app', prompt: '로그 레벨 정리해줘' }],
+  [16000, { ev: 'Stop', sid: F, proj: 'shop-backend-app', effort: 'medium', msg: '로그 레벨을 INFO 로 맞췄어요.\n- 테스트 통과\n- 커밋은 아직 안 했어요' }],
+  [500, { ev: 'UserPromptSubmit', sid: G, proj: 'AI_Team', prompt: '문서 맞춤법 봐줘' }],
+  [17000, { ev: 'Notification', sid: G, proj: 'AI_Team', ntype: 'idle_prompt', msg: 'Claude is waiting for your input' }],
 ];
 
 // Relay items (what the server's `event: ceo` would carry) so the 대표실 cards can be answered in the simulator.
@@ -77,7 +112,13 @@ const RELAY = [
       { question: '같이 돌릴 검증을 골라 주세요', header: '검증', multiSelect: true,
         options: [{ label: '단위 테스트', description: '' }, { label: '스테이징 리허설', description: '' }, { label: '롤백 스크립트 점검', description: '' }] },
     ] }],
-  [12100, { id: 'sim-p1', kind: 'permission', sid: C, proj: 'web-ui', tool: 'Bash', target: 'git push origin main', input: { command: 'git push origin main' } }],
+  [15600, { id: 'sim-p3', kind: 'permission', sid: D, proj: 'shop-backend-oms', aid: DEV2, atype: 'backend-dev', tool: 'Bash', target: './gradlew build', input: { command: './gradlew build' } }],
+  [8100, { id: 'sim-q2', kind: 'question', sid: D, proj: 'shop-backend-oms', aid: LOOK2, atype: 'lookup', tool: 'AskUserQuestion', target: null, input: {},
+    questions: [{ question: '오래된 재고 스냅샷을 30일 기준으로 지울까요, 90일 기준으로 지울까요?', header: '정리 범위', multiSelect: false,
+      options: [{ label: '30일', description: '더 많이 지워요' }, { label: '90일', description: '보수적으로 지워요' }] }] }],
+  [15100, { id: 'sim-p2', kind: 'permission', sid: E, proj: 'web-ui', aid: REV, atype: 'code-reviewer', tool: 'WebFetch', target: 'https://example.com/docs/release-notes',
+    input: { url: 'https://example.com/docs/release-notes', prompt: '릴리스 노트에서 깨지는 변경을 찾아 주세요' } }],
+  [12100, { id: 'sim-p1', kind: 'permission', sid: C, proj: 'web-ui', tool: 'Bash', target: 'git push origin main', input: { command: 'git push origin main', description: 'main 브랜치를 원격에 올려요' } }],
 ];
 
 /** Play the extra floors into `push(event)` and relay frames into `relayPush(frame)` at `speed`; returns a cancel function. */

@@ -1,4 +1,5 @@
-// 대표실 relay: answer Claude Code's permission prompts and AskUserQuestion from the dashboard.
+// 대표실 relay: answer Claude Code's permission prompts and AskUserQuestion from the dashboard, and (kind
+// `instruct`, hooks/ceo-stop.sh) send the next instruction to a main session whose final report asks the 대표.
 // A hook (hooks/ceo-relay.sh, or an `http` hook on /relay/hook) POSTs its raw hook input and long-polls;
 // the dashboard answers with POST /relay/answer (or sends it back undecided with POST /relay/release). Decisions come ONLY from answer(): the relay never allows
 // anything by itself. Every other ending (timeout, hook killed, the terminal answered first) yields "no decision",
@@ -7,10 +8,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFile } from 'node:child_process';
+import { reportAsks } from './public/ceo.js';   // one implementation of "does the report ask?" (dashboard + relay)
 
-export const WAIT_DEFAULT = 170000, WAIT_MIN = 100, WAIT_MAX = 540000;
-export const MESSAGE_MAX = 500, ANSWER_MAX = 500;
-const PENDING_MAX = 100, DONE_MAX = 500, CLIP = 4000;
+export const WAIT_DEFAULT = 120000, WAIT_MIN = 100, WAIT_MAX = 540000;
+/** Stop (instruct) waits at most 320 s: ceo-stop.sh's curl gets wait + 5 s, which must stay under the hook timeout
+ *  the setup writes (330 s). INSTRUCT_CAP: Claude Code ends the turn after 8 stop-hook continuations in a row, so the
+ *  dashboard offers at most 8 instructions per session until the human types a prompt (or the session ends). */
+export const STOP_WAIT_MAX = 320000, INSTRUCT_CAP = 8;
+export const MESSAGE_MAX = 500, ANSWER_MAX = 500, INSTRUCT_MAX = 2000, REPORT_MAX = 4000;
+const PENDING_MAX = 100, DONE_MAX = 500, CLIP = 4000, ENDS_MAX = 200;
+/** Endings without a decision that the dashboard explains on the card (why there are no buttons). */
+export const END_REASONS = new Set(['timeout', 'no-viewer', 'hidden', 'withdrawn', 'released', 'cap', 'unchecked']);
 const SID = /^[A-Za-z0-9_-]{1,128}$/;
 const CTRL_G = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g;
 
@@ -23,6 +31,10 @@ export function parseWait(v) {
 
 /** Control characters (incl. newlines) -> one space, trimmed, capped at `max` code points. */
 export const cleanText = (s, max) => Array.from(String(s).replace(CTRL_G, ' ').trim()).slice(0, max).join('');
+const CTRL_KEEP_NL = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u2028\u2029]+/g;
+/** An instruction typed in the dashboard: CR/CRLF -> \n, every other control character -> one space, trimmed.
+ *  Not capped here: the caller rejects > INSTRUCT_MAX code points (hooks/ceo-stop.sh applies the same rules again). */
+export const cleanInstruction = s => String(s).replace(/\r\n?/g, '\n').replace(CTRL_KEEP_NL, ' ').trim();
 
 /** Same "key argument" office-events.sh logs as `target` (jq `//` chain, command capped at 120 code points). */
 export function targetOf(i) {
@@ -67,6 +79,13 @@ function cleanQuestions(qs) {
 export function classifyInput(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { error: 'body must be a hook input object' };
   if (typeof raw.session_id !== 'string' || !SID.test(raw.session_id)) return { error: 'bad session_id' };
+  if (raw.hook_event_name === 'Stop') {
+    // Only a main session's final report that asks the 대표 something; everything else is "no decision" (none).
+    if (raw.agent_id != null && raw.agent_id !== '') return { none: 'subagent' };
+    const msg = raw.last_assistant_message;
+    if (typeof msg !== 'string' || !msg.trim()) return { none: 'no-report' };
+    return reportAsks(msg) ? { kind: 'instruct' } : { none: 'report-does-not-ask' };
+  }
   if (typeof raw.tool_name !== 'string' || !raw.tool_name || raw.tool_name.length > 200) return { error: 'bad tool_name' };
   if (raw.tool_input != null && (typeof raw.tool_input !== 'object' || Array.isArray(raw.tool_input))) return { error: 'bad tool_input' };
   if (raw.hook_event_name === 'PermissionRequest') return { kind: 'permission' };
@@ -77,12 +96,20 @@ export function classifyInput(raw) {
     if (new Set(qs.map(q => q.question)).size !== qs.length) return { error: 'duplicate question text' };
     return { kind: 'question' };
   }
-  return { error: 'only PermissionRequest and PreToolUse(AskUserQuestion) are relayed' };
+  return { error: 'only PermissionRequest, PreToolUse(AskUserQuestion) and Stop are relayed' };
 }
 
 /** Validate a dashboard decision for an item. Returns {error} or {value} (normalised). */
 export function validateDecision(item, d) {
   if (!d || typeof d !== 'object' || Array.isArray(d)) return { error: 'decision must be an object' };
+  if (item.kind === 'instruct') {
+    for (const k of Object.keys(d)) if (k !== 'text') return { error: `unknown decision key: ${k.slice(0, 40)}` };
+    if (typeof d.text !== 'string') return { error: 'text must be a string' };
+    const text = cleanInstruction(d.text), n = Array.from(text).length;
+    if (!n) return { error: 'text is empty' };
+    if (n > INSTRUCT_MAX) return { error: `text is longer than ${INSTRUCT_MAX} characters` };
+    return { value: { text } };
+  }
   if (item.kind === 'permission') {
     for (const k of Object.keys(d)) if (k !== 'behavior' && k !== 'message') return { error: `unknown decision key: ${k.slice(0, 40)}` };
     if (d.behavior !== 'allow' && d.behavior !== 'deny') return { error: 'behavior must be "allow" or "deny"' };
@@ -113,6 +140,7 @@ export function validateDecision(item, d) {
  *  Only behavior/message and answers are ever emitted: no updatedPermissions, no rewritten tool input. */
 export function hookOutput(kind, toolInput, decision) {
   if (!decision) return {};
+  if (kind === 'instruct') return { decision: 'block', reason: decision.text };   // Stop: continue with this instruction
   if (kind === 'permission') {
     const dec = decision.behavior === 'allow' ? { behavior: 'allow' }
       : { behavior: 'deny', ...(decision.message ? { message: decision.message } : {}) };
@@ -133,6 +161,8 @@ export class Relay {
     Object.assign(this, { broadcast, redact, logFile, log, redactTarget, now, projOf });
     this.pending = new Map();     // id -> {item, toolInput, settle, timer}
     this.done = new Map();        // id -> by   (recent, so a late second answer gets 409 not 404)
+    this.ends = [];               // recent endings without a decision: {sid, aid?, tool, kind, reason, wait?, at} (snapshot)
+    this.instructs = new Map();   // sid -> dashboard instructions since the last typed prompt (INSTRUCT_CAP)
   }
 
   list() { return [...this.pending.values()].map(p => p.item); }
@@ -142,11 +172,16 @@ export class Relay {
   ask(raw, waitMs = WAIT_DEFAULT, { alive = () => true } = {}) {
     const c = classifyInput(raw);
     if (c.error) return { error: c.error, status: 400 };
+    if (c.none) return { none: c.none };
+    if (c.kind === 'instruct') {
+      if ((this.instructs.get(raw.session_id) || 0) >= INSTRUCT_CAP) { this.skip(raw, 'cap'); return { none: 'cap' }; }
+      waitMs = Math.min(waitMs, STOP_WAIT_MAX);
+    }
     if (this.pending.size >= PENDING_MAX) return { error: 'too many pending items', status: 503 };
     const ti = raw.tool_input || {}, t0 = this.now();
-    const target = targetOf(ti);
+    const target = c.kind === 'instruct' ? null : targetOf(ti);
     const item = { id: crypto.randomUUID(), kind: c.kind, sid: raw.session_id,
-      proj: typeof raw.cwd === 'string' ? (this.projOf(raw.cwd) || path.basename(raw.cwd)) : '', tool: raw.tool_name, createdAt: t0, expiresAt: t0 + waitMs };
+      proj: typeof raw.cwd === 'string' ? (this.projOf(raw.cwd) || path.basename(raw.cwd)) : '', tool: c.kind === 'instruct' ? 'Stop' : raw.tool_name, createdAt: t0, expiresAt: t0 + waitMs };
     if (typeof raw.agent_id === 'string' && raw.agent_id) item.aid = raw.agent_id;
     if (typeof raw.agent_type === 'string' && raw.agent_type) item.atype = raw.agent_type;
     if (typeof raw.tool_use_id === 'string') item.tuid = raw.tool_use_id;
@@ -162,6 +197,7 @@ export class Relay {
       if (clipped) item.clipped = true;
     }
     if (c.kind === 'question') item.questions = cleanQuestions(ti.questions);   // kept under --redact: needed to answer
+    if (c.kind === 'instruct') { item.asks = true; if (!this.redact) item.msg = raw.last_assistant_message.slice(0, REPORT_MAX); }
     const p = { item, toolInput: ti, rawTarget: target, alive };
     const wait = new Promise(res => { p.settle = res; });
     p.timer = setTimeout(() => this.finish(item.id, 'terminal', null, 'timeout'), waitMs);
@@ -169,6 +205,24 @@ export class Relay {
     this.pending.set(item.id, p);
     this.broadcast({ type: 'ask', item });
     return { id: item.id, item, wait, toolInput: ti };
+  }
+
+  /** A request the server did not hold (no dashboard open / only background tabs): remembered and broadcast so a
+   *  card can say why it has no buttons. Only valid permission / question inputs count. */
+  skip(raw, reason) {
+    const c = classifyInput(raw);
+    if (c.error || c.none || (c.kind === 'instruct' && reason !== 'cap' && reason !== 'unchecked')) return null;
+    return this.noteEnd({ sid: raw.session_id, aid: typeof raw.agent_id === 'string' && raw.agent_id ? raw.agent_id : undefined, tool: c.kind === 'instruct' ? 'Stop' : raw.tool_name, kind: c.kind, reason, at: this.now() });
+  }
+  /** Keep (and broadcast) one ending record; also used to seed from today's ceo-decisions.jsonl at boot. */
+  noteEnd(e, broadcast = true) {
+    if (!e || typeof e.sid !== 'string' || !END_REASONS.has(e.reason)) return null;
+    const rec = { sid: e.sid, ...(e.aid ? { aid: e.aid } : {}), tool: typeof e.tool === 'string' ? e.tool : '', kind: e.kind || '', reason: e.reason,
+      ...(Number.isFinite(e.wait) ? { wait: e.wait } : {}), at: Number.isFinite(e.at) ? e.at : this.now() };
+    this.ends.push(rec);
+    if (this.ends.length > ENDS_MAX) this.ends.splice(0, this.ends.length - ENDS_MAX);
+    if (broadcast) this.broadcast({ type: 'ended', end: rec });
+    return rec;
   }
 
   /** Dashboard answer. Returns {status, error?, item?}. Exactly one answer wins. */
@@ -212,21 +266,26 @@ export class Relay {
   /** Nobody can answer: pending items (all, or only those of `kind`) end now with no decision. */
   releaseAll(reason = 'no-viewer', kind = null) {
     let n = 0;
-    for (const [id, p] of [...this.pending]) if ((!kind || p.item.kind === kind) && this.finish(id, reason, null, reason)) n++;
+    const kinds = kind == null ? null : [].concat(kind);
+    for (const [id, p] of [...this.pending]) if ((!kinds || kinds.includes(p.item.kind)) && this.finish(id, reason, null, reason)) n++;
     return n;
   }
 
   /** One live office-events line. Resolves items the terminal (or the session's progress) has made moot. */
   observe(e) {
-    if (!e || typeof e.ev !== 'string' || typeof e.sid !== 'string' || !this.pending.size) return;
+    if (!e || typeof e.ev !== 'string' || typeof e.sid !== 'string') return;
+    if (e.ev === 'UserPromptSubmit' || e.ev === 'SessionEnd') this.instructs.delete(e.sid);   // a typed prompt resets the cap
+    if (!this.pending.size) return;
     const ts = tsMs(e);
     for (const [id, p] of this.pending) {
       const it = p.item;
       if (it.sid !== e.sid) continue;
       if (Number.isNaN(ts) || ts < Math.floor(it.createdAt / 1000) * 1000) continue;   // hook ts are whole seconds
       const sameAgent = (e.aid || null) === (it.aid || null);
+      // An instruct item is opened BY a Stop (its own office-events line arrives alongside): only a new prompt or the
+      // session ending makes it moot. Tool events cannot happen while the Stop hook waits.
       let hit = e.ev === 'UserPromptSubmit' || e.ev === 'SessionEnd'
-        || (sameAgent && e.ev === (it.aid ? 'SubagentStop' : 'Stop'));
+        || (it.kind !== 'instruct' && sameAgent && e.ev === (it.aid ? 'SubagentStop' : 'Stop'));
       if (!hit && sameAgent && POST_TOOL.includes(e.ev) && e.tool === it.tool) {
         // Same tool_use_id when both sides have one; otherwise the same NON-null target. A null target never matches.
         hit = it.tuid && e.tuid ? e.tuid === it.tuid
@@ -244,6 +303,11 @@ export class Relay {
     this.done.set(id, by);
     if (this.done.size > DONE_MAX) this.done.delete(this.done.keys().next().value);
     this.record(p.item, by, decision, reason);
+    if (by === 'dashboard' && decision && p.item.kind === 'instruct') this.instructs.set(p.item.sid, (this.instructs.get(p.item.sid) || 0) + 1);
+    const wait = p.item.expiresAt - p.item.createdAt;
+    if (reason === 'timeout') this.log(`대표실: ${p.item.tool} (${p.item.sid.slice(0, 8)}) expired after ${Math.round(wait / 1000)}s`);
+    const endReason = by === 'withdrawn' ? 'withdrawn' : reason;
+    if (!decision && END_REASONS.has(endReason)) this.noteEnd({ sid: p.item.sid, aid: p.item.aid, tool: p.item.tool, kind: p.item.kind, reason: endReason, wait, at: this.now() }, false);
     if (by === 'dashboard' && decision) this.broadcast({ type: 'answered', id, by });
     else if (by === 'withdrawn') this.broadcast({ type: 'withdrawn', id });
     else this.broadcast({ type: 'resolved', id, by, reason });
@@ -254,8 +318,8 @@ export class Relay {
   record(item, by, decision, reason) {
     if (!this.logFile) return;
     let d = decision;
-    if (d && this.redact) d = d.answers ? { answered: Object.keys(d.answers).length } : { behavior: d.behavior };
-    const line = { ts: new Date(this.now()).toISOString(), id: item.id, sid: item.sid, tool: item.tool, kind: item.kind, by, decision: d || null };
+    if (d && this.redact) d = d.answers ? { answered: Object.keys(d.answers).length } : d.text != null ? { instructed: true } : { behavior: d.behavior };
+    const line = { ts: new Date(this.now()).toISOString(), id: item.id, sid: item.sid, tool: item.tool, kind: item.kind, by, decision: d || null, wait: item.expiresAt - item.createdAt };
     if (item.aid) line.aid = item.aid;
     if (item.proj) line.proj = item.proj;
     if (reason) line.reason = reason;

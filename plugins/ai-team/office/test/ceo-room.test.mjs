@@ -53,7 +53,7 @@ test('report: Stop carries the final message into the queue entry; --redact drop
 test('대표실: no empty-state note in markup, styles or renderer; the line empties through answer, release and 모두 돌려보내기', () => {
   for (const f of ['index.html', 'app.js', 'style.css']) {
     const src = pub(f);
-    assert.equal(/ceo-empty|요청이 없어요/.test(src), false, `${f} has no "대표님께 온 요청이 없어요" note`);
+    assert.equal(/ceo-empty|대표님께 온 요청이 없어요/.test(src), false, `${f} has no "대표님께 온 요청이 없어요" note in the room (the list drawer has its own empty state)`);
   }
   resetRelay();
   const m = new Map(), ts = n => `2026-10-21T10:00:0${n}Z`;

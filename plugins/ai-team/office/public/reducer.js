@@ -326,7 +326,7 @@ function tickerText(e) {
     case 'SubagentStart': return '엘리베이터 도착';
     case 'SubagentStop': return '작업 끝, 퇴장';
     case 'Stop': return '턴 종료, 대기';
-    case 'RelayDecided': return `대표실 ${e.answer === 'allow' ? '승인' : e.answer === 'deny' ? '거부' : '답변'}${e.tool ? ` ${e.tool}` : ''}`;
+    case 'RelayDecided': return `대표실 ${e.answer === 'allow' ? '승인' : e.answer === 'deny' ? '거부' : e.answer === 'instructed' ? '지시' : '답변'}${e.tool && e.answer !== 'instructed' ? ` ${e.tool}` : ''}`;
     default: return e.ev;
   }
 }

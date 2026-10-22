@@ -9,7 +9,9 @@ import path from 'node:path';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { Relay, parseWait, classifyInput, validateDecision, hookOutput, targetOf, cleanText, WAIT_DEFAULT, WAIT_MAX,
-  checkCaller, parseLsof, fakeAncestryRunner } from '../relay.mjs';
+  checkCaller, parseLsof, fakeAncestryRunner, cleanInstruction, INSTRUCT_MAX, INSTRUCT_CAP, STOP_WAIT_MAX } from '../relay.mjs';
+import { testAncestry } from '../server.mjs';
+import { reportAsks } from '../public/ceo.js';
 
 const SERVER = fileURLToPath(new URL('../server.mjs', import.meta.url));
 const HOOK = fileURLToPath(new URL('../hooks/ceo-relay.sh', import.meta.url));
@@ -117,7 +119,7 @@ test('Relay: one answer wins, timeout, withdraw, terminal resolution rules, deci
   assert.deepEqual(lines.map(l => l.by), ['dashboard', 'terminal', 'withdrawn', 'terminal', 'terminal', 'terminal']);
   assert.deepEqual(Object.keys(lines[0]).slice(0, 7), ['ts', 'id', 'sid', 'tool', 'kind', 'by', 'decision']);
   assert.deepEqual(lines[0].decision, { behavior: 'allow' });
-  assert.equal(r.ask({ ...permInput(), hook_event_name: 'Stop' }).status, 400);
+  assert.deepEqual(r.ask({ ...permInput(), hook_event_name: 'Stop' }), { none: 'no-report' }, 'a Stop without a report is no decision, never held');
 });
 
 test('Relay.observe: ts >= floor(createdAt), tuid when both have one, else equal NON-null target', async () => {
@@ -232,7 +234,10 @@ test('live: no viewer -> immediate null; long-poll resolves on answer; validatio
   assert.deepEqual(early.json, { id: null, decision: null, reason: 'no-viewer' }); assert.ok(Date.now() - t0 < 1000);
 
   const v = await viewer(port);
-  assert.deepEqual(v.ceo[0], { type: 'snapshot', items: [] });
+  const { startedAt, ...snap } = v.ceo[0];
+  assert.deepEqual(snap, { type: 'snapshot', items: [], ends: [{ sid: SID, tool: 'Bash', kind: 'permission', reason: 'no-viewer', at: snap.ends[0].at }] },
+    'the request nobody could hold is explained in the snapshot');
+  assert.ok(Number.isFinite(startedAt));
   const pending = ask(port, permInput(), 5000);
   const { item } = await v.waitFor(f => f.type === 'ask');
   assert.equal(item.kind, 'permission'); assert.equal(item.tool, 'Bash'); assert.equal(item.proj, 'demo');
@@ -254,7 +259,8 @@ test('live: no viewer -> immediate null; long-poll resolves on answer; validatio
   assert.deepEqual(await v.waitFor(f => f.type === 'answered'), { type: 'answered', id: item.id, by: 'dashboard' });
   const logLine = JSON.parse(fs.readFileSync(path.join(logs, 'ceo-decisions.jsonl'), 'utf8').trim());
   assert.equal(logLine.by, 'dashboard'); assert.equal(logLine.sid, SID); assert.equal(logLine.decision.behavior, 'deny');
-  assert.equal((await ask(port, { hook_event_name: 'Stop', session_id: SID }, 1000)).status, 400);
+  assert.deepEqual((await ask(port, { hook_event_name: 'Stop', session_id: SID }, 1000)).json, { id: null, decision: null, reason: 'no-report' }, 'Stop: no report -> no decision at once');
+  assert.equal((await ask(port, { hook_event_name: 'SubagentStop', session_id: SID, last_assistant_message: '할까요?' }, 1000)).status, 400);
   assert.equal((await ask(port, '{nope', 1000)).status, 400);
   v.close();
 });
@@ -386,7 +392,7 @@ test('ceo-relay.sh: answered via curl -> exact hook JSON; timeout / server down 
     updatedInput: { questions: QUESTIONS, answers: { 'Which framework?': 'React', 'Which extras?': 'ESLint' } } } });
 
   // OFFICE_RELAY_WAIT_MS parsing: leading zeros are decimal (never octal), > 7 digits -> default; curl gets wait/1000+5 s.
-  for (const [val, want] of [['060000', 60000], ['0800', 800], ['12345678901234567890', 170000]]) {
+  for (const [val, want] of [['060000', 60000], ['0800', 800], ['12345678901234567890', 120000]]) {
     const hr = runHook(permInput(), { OFFICE_PORT: String(port), OFFICE_RELAY_WAIT_MS: val, OFFICE_RELAY_DEBUG: '1' });
     const g = await v.waitFor(x => x.type === 'ask' && !v.ceo.some(y => y.id === x.item.id && y.type !== 'ask'));
     assert.equal(g.item.expiresAt - g.item.createdAt, want, val);
@@ -621,4 +627,239 @@ test('live: a dashboard answer becomes a RelayDecided event in the history (a re
   const v2 = await viewer(port);                          // a reload replays it
   assert.ok(v2.raw.includes('"ev":"RelayDecided"'));
   v2.close();
+});
+
+// ---------- Stop relay (kind instruct, hooks/ceo-stop.sh): send the next instruction from the dashboard ----------
+const STOP_HOOK = fileURLToPath(new URL('../hooks/ceo-stop.sh', import.meta.url));
+const ASKING = '정리했어요.\n- 테스트 통과\n다음 결정: PR #23을 머지할지 정해 주세요.';
+const stopInput = (o = {}) => ({ session_id: SID, transcript_path: '/x.jsonl', cwd: '/w/demo', permission_mode: 'default',
+  hook_event_name: 'Stop', stop_hook_active: false, last_assistant_message: ASKING, ...o });
+function runStop(input, env) {
+  return new Promise(resolve => {
+    const t0 = Date.now();
+    const p = spawn('bash', [STOP_HOOK], { env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'pipe'] });
+    let out = '', err = '';
+    p.stdout.on('data', b => { out += b; }); p.stderr.on('data', b => { err += b; });
+    p.on('close', code => resolve({ code, out, err, ms: Date.now() - t0 }));
+    p.stdin.end(typeof input === 'string' ? input : JSON.stringify(input));
+  });
+}
+
+test('instruct: classifyInput uses the shared reportAsks (one implementation); validateDecision cleans and bounds the text', async () => {
+  const src = fs.readFileSync(fileURLToPath(new URL('../relay.mjs', import.meta.url)), 'utf8');
+  assert.match(src, /import \{ reportAsks \} from '\.\/public\/ceo\.js'/, 'relay.mjs imports the dashboard heuristic');
+  assert.doesNotMatch(src, /할까요|정해\\s\*주세요|다음\\s\*결정/, 'no second copy of the wording rules in relay.mjs');
+  for (const body of [ASKING, '배포할까요?', '끝났어요.', '다음 결정: 없음', '```\nok?\n```', 'https://x.test/search?'])
+    assert.equal(classifyInput(stopInput({ last_assistant_message: body })).kind === 'instruct', reportAsks(body), JSON.stringify(body));
+  assert.deepEqual(classifyInput(stopInput({ agent_id: 'a1' })), { none: 'subagent' });
+  assert.deepEqual(classifyInput(stopInput({ last_assistant_message: '' })), { none: 'no-report' });
+  assert.deepEqual(classifyInput(stopInput({ last_assistant_message: '다 했어요.' })), { none: 'report-does-not-ask' });
+  assert.equal(classifyInput(stopInput({ stop_hook_active: true })).kind, 'instruct', 'a continuation may be held again (human-answered)');
+  const it = { kind: 'instruct' };
+  assert.deepEqual(validateDecision(it, { text: '  머지\r\n해\u0007 주세요\t' }), { value: { text: '머지\n해  주세요' } });
+  assert.equal(cleanInstruction('a b\u0000c\r\nd'), 'a b c\nd');
+  assert.deepEqual(validateDecision(it, { text: 'x'.repeat(INSTRUCT_MAX) }).value.text.length, INSTRUCT_MAX);
+  for (const bad of [{ text: '' }, { text: ' \n\t ' }, { text: 'x'.repeat(INSTRUCT_MAX + 1) }, { text: 7 }, { text: ['a'] }, { text: 'ok', behavior: 'allow' }, {}, null, 'go'])
+    assert.ok(validateDecision(it, bad).error, JSON.stringify(bad));
+  assert.deepEqual(hookOutput('instruct', null, { text: '진행해 주세요' }), { decision: 'block', reason: '진행해 주세요' });
+  assert.deepEqual(hookOutput('instruct', null, null), {});
+
+  const logFile = path.join(fs.mkdtempSync(path.join(tmp, 'ins-')), 'ceo-decisions.jsonl');
+  const r = new Relay({ logFile, redact: true });
+  const a = r.ask(stopInput(), 5000);
+  assert.deepEqual([a.item.kind, a.item.tool, a.item.asks, a.item.msg], ['instruct', 'Stop', true, undefined], '--redact: no report text on the item');
+  const ts = new Date(a.item.createdAt + 1000).toISOString();
+  r.observe({ ev: 'Stop', sid: SID, ts });
+  assert.equal(r.pending.size, 1, 'its own Stop line does not resolve it');
+  assert.equal(r.answer(a.id, { text: '머지해 주세요' }).status, 200);
+  assert.deepEqual(await a.wait, { decision: { text: '머지해 주세요' }, by: 'dashboard' });
+  assert.deepEqual(JSON.parse(fs.readFileSync(logFile, 'utf8').trim()).decision, { instructed: true }, '--redact log keeps no text');
+  const b = new Relay().ask(stopInput(), 5000);
+  assert.equal(b.item.msg, ASKING, 'the report rides on the item for display');
+  const c = new Relay(); const ci = c.ask(stopInput(), 5000);
+  c.observe({ ev: 'UserPromptSubmit', sid: SID, ts: new Date(ci.item.createdAt + 1000).toISOString() });
+  assert.deepEqual(await ci.wait, { decision: null, by: 'terminal' }, 'a prompt typed in the terminal resolves it');
+});
+
+test('live instruct: needs a VISIBLE dashboard; answer validation + guards; release; RelayDecided "instructed"', async () => {
+  const logs = fs.mkdtempSync(path.join(tmp, 'ins-live-'));
+  const port = await startServer(['--logs', logs]);
+  assert.deepEqual((await ask(port, stopInput(), 5000)).json, { id: null, decision: null, reason: 'no-viewer' }, 'no dashboard: never held');
+  const v = await viewer(port);
+  assert.deepEqual((await ask(port, stopInput({ last_assistant_message: '끝났어요.' }), 5000)).json, { id: null, decision: null, reason: 'report-does-not-ask' });
+  const p = ask(port, stopInput(), 5000);
+  const { item } = await v.waitFor(f => f.type === 'ask' && f.item.kind === 'instruct');
+  assert.deepEqual([item.tool, item.asks, item.msg], ['Stop', true, ASKING]);
+  for (const bad of [{ text: '' }, { text: 'x'.repeat(2001) }, { text: 3 }, { text: 'ok', behavior: 'allow' }, { behavior: 'allow' }, { answers: { a: 'b' } }])
+    assert.equal((await answer(port, item.id, bad)).status, 400, JSON.stringify(bad).slice(0, 60));
+  assert.equal((await answer(port, item.id, { text: 'go' }, { Origin: 'http://evil.com' })).status, 403);
+  assert.equal((await answer(port, item.id, { text: 'go' }, { Origin: `http://127.0.0.1:${port}` })).status, 403, 'no viewer token');
+  const ok = await answer(port, item.id, { text: '머지해\r\n주세요' });
+  assert.deepEqual([ok.status, ok.json.decision], [200, { text: '머지해\n주세요' }]);
+  assert.equal((await answer(port, item.id, { text: 'again' })).status, 409, 'stale: one answer wins');
+  assert.deepEqual((await p).json, { id: item.id, kind: 'instruct', decision: { text: '머지해\n주세요' }, by: 'dashboard' });
+  const until = Date.now() + 3000;
+  while (!v.raw.includes('"answer":"instructed"') && Date.now() < until) await new Promise(r => setTimeout(r, 50));
+  assert.match(v.raw, /"ev":"RelayDecided"[^\n]*"answer":"instructed"/, 'replayed as RelayDecided');
+  const p2 = ask(port, stopInput(), 5000);
+  const f2 = await v.waitFor(f => f.type === 'ask' && f.item.kind === 'instruct' && f.item.id !== item.id);
+  assert.equal((await release(port, f2.item.id)).status, 200);
+  assert.deepEqual((await p2).json, { id: f2.item.id, kind: 'instruct', decision: null, by: 'dashboard' }, 'release = no decision');
+  v.close();
+  const agentPort = await startServer(['--logs', fs.mkdtempSync(path.join(tmp, 'ins-agent-'))], AGENT_TREE);
+  const va = await viewer(agentPort);
+  const p3 = ask(agentPort, stopInput(), 3000);
+  const f3 = await va.waitFor(f => f.type === 'ask');
+  assert.equal((await answer(agentPort, f3.item.id, { text: '진행해 주세요' })).status, 403, 'a Claude Code process tree cannot instruct itself');
+  assert.equal((await p3).json.decision, null);
+  va.close();
+});
+
+test('ceo-stop.sh: answer -> exact block JSON; no viewer / not asking / subagent / release / timeout / down / disabled -> nothing', async () => {
+  const logs = fs.mkdtempSync(path.join(tmp, 'stop-pipe-'));
+  const port = await startServer(['--logs', logs]);
+  const env = { OFFICE_PORT: String(port), OFFICE_RELAY_STOP_WAIT_MS: '1500' };
+  let r = await runStop(stopInput(), env);
+  pipeLog.push([`Stop, no viewer (${r.ms}ms)`, JSON.stringify(r.out)]);
+  assert.deepEqual([r.code, r.out], [0, '']); assert.ok(r.ms < 1500, `${r.ms}ms`);
+  const v = await viewer(port);
+  const fresh = x => x.type === 'ask' && x.item.kind === 'instruct' && !v.ceo.some(g => g.id === x.item.id && g.type !== 'ask');
+
+  let run = runStop(stopInput(), env);
+  let f = await v.waitFor(fresh);
+  await curlAnswer(port, f.item.id, { text: '머지해 주세요' });
+  r = await run;
+  pipeLog.push(['Stop answered', r.out.trim()]);
+  assert.equal(r.code, 0);
+  assert.equal(r.out, '{"decision":"block","reason":"머지해 주세요"}\n', 'exactly the Stop block JSON, nothing else');
+
+  run = runStop(stopInput({ stop_hook_active: true }), env);
+  f = await v.waitFor(fresh);
+  const evil = '"},"continue":false,"x":"\n두 번째 줄\u0007 \\u0000 `rm -rf` $(id)';
+  await curlAnswer(port, f.item.id, { text: evil });
+  r = await run;
+  pipeLog.push(['Stop answered (quotes/newline/control)', r.out.trim()]);
+  const j = JSON.parse(r.out);
+  assert.deepEqual(Object.keys(j), ['decision', 'reason']); assert.equal(j.decision, 'block');
+  assert.equal(j.reason, '"},"continue":false,"x":"\n두 번째 줄  \\u0000 `rm -rf` $(id)', 'quotes kept as text, \\n kept, BEL -> space');
+
+  run = runStop(stopInput(), env);
+  f = await v.waitFor(fresh);
+  assert.equal((await release(port, f.item.id)).status, 200);
+  r = await run;
+  assert.deepEqual([r.code, r.out], [0, ''], '터미널에서 할게요 = nothing printed');
+
+  r = await runStop(stopInput(), env);                                   // nobody answers
+  pipeLog.push([`Stop timeout (${r.ms}ms)`, JSON.stringify(r.out)]);
+  assert.deepEqual([r.code, r.out], [0, '']); assert.ok(r.ms >= 1400 && r.ms < 4000, `${r.ms}ms`);
+  for (const [why, inp, e] of [['not asking', stopInput({ last_assistant_message: '다 했어요.' }), env], ['subagent', stopInput({ agent_id: 'a1', agent_type: 'lookup' }), env],
+    ['SubagentStop', stopInput({ hook_event_name: 'SubagentStop' }), env], ['disabled', stopInput(), { ...env, OFFICE_RELAY_DISABLE: '1' }],
+    ['server down', stopInput(), { OFFICE_PORT: '9', OFFICE_RELAY_STOP_WAIT_MS: '1500' }], ['not json', 'nope', env]]) {
+    r = await runStop(inp, e);
+    assert.deepEqual([r.code, r.out], [0, ''], why); assert.ok(r.ms < 2500, `${why} ${r.ms}ms`);
+  }
+  for (const [val, want] of [['060000', 60000], ['50', 100], ['999999999', 120000], ['600000', 320000], ['320000', 320000]]) {
+    const o = runStop(stopInput({ last_assistant_message: '다 했어요.' }), { OFFICE_PORT: String(port), OFFICE_RELAY_STOP_WAIT_MS: val, OFFICE_RELAY_DEBUG: '1' });
+    assert.match((await o).err, new RegExp(`wait_ms=${want} max_time=${Math.floor(want / 1000) + 5}\\b`), val);
+  }
+  v.close();
+});
+
+test('ceo-stop.sh builds its output itself: a hostile server reply cannot add fields, skip cleanup or exceed 2000 chars', async () => {
+  let reply = {};
+  const fake = http.createServer((req, res) => { req.resume(); req.on('end', () => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(reply)); }); });
+  await new Promise(r => fake.listen(0, '127.0.0.1', r));
+  const env = { OFFICE_PORT: String(fake.address().port), OFFICE_RELAY_STOP_WAIT_MS: '1000' };
+  try {
+    reply = { kind: 'instruct', decision: { text: `  a\r\nb\u0001c\u001b[31m${'가'.repeat(3000)}`, behavior: 'allow' }, hookSpecificOutput: { x: 1 }, continue: false };
+    let r = await runStop(stopInput(), env);
+    const j = JSON.parse(r.out);
+    assert.deepEqual(Object.keys(j), ['decision', 'reason']);
+    assert.equal(j.reason.slice(0, 8), 'a\nb c [3'); assert.equal(Array.from(j.reason).length, 2000, 'capped at 2000 characters');
+    assert.doesNotMatch(j.reason, /[\u0000-\u0009\u000b-\u001f\u007f]/, 'no control characters except \\n');
+    for (const bad of [{ kind: 'permission', decision: { text: 'x' } }, { kind: 'instruct', decision: { text: 5 } }, { kind: 'instruct', decision: { text: ' \u0001 ' } },
+      { kind: 'instruct', decision: null }, { kind: 'instruct', decision: 'go' }]) {
+      reply = bad; r = await runStop(stopInput(), env);
+      assert.deepEqual([r.code, r.out], [0, ''], JSON.stringify(bad));
+    }
+  } finally { fake.close(); }
+});
+
+test('endings without a decision: expiry is logged with its wait, kept for the snapshot, skips broadcast as `ended`', async () => {
+  const lines = [], frames = [];
+  const r = new Relay({ log: (...a) => lines.push(a.join(' ')), broadcast: f => frames.push(f) });
+  const a = r.ask(permInput(), 150);
+  await a.wait;
+  assert.ok(lines.some(l => l === `대표실: Bash (${SID.slice(0, 8)}) expired after 0s`), lines.join('\n'));
+  assert.deepEqual(r.ends.map(e => [e.reason, e.tool, e.wait]), [['timeout', 'Bash', 150]]);
+  assert.deepEqual(r.skip(permInput(), 'no-viewer') && frames.at(-1).type, 'ended');
+  assert.equal(frames.at(-1).end.reason, 'no-viewer');
+  assert.equal(r.skip({ hook_event_name: 'Stop', session_id: SID, last_assistant_message: '할까요?' }, 'no-viewer'), null, 'instruct skips are not recorded');
+  assert.equal(r.skip({ nope: 1 }, 'no-viewer'), null);
+  const b = r.ask(permInput(), 5000); r.withdraw(b.id);
+  assert.equal(r.ends.at(-1).reason, 'withdrawn');
+  const c = r.ask(permInput(), 5000); r.answer(c.id, { behavior: 'allow' });
+  assert.equal(r.ends.length, 3, 'a decision is not an ending to explain');
+
+  const logs = fs.mkdtempSync(path.join(tmp, 'ends-'));
+  const port = await startServer(['--logs', logs]);
+  await ask(port, permInput(), 1000);                                    // no dashboard: skipped
+  const v = await viewer(port);
+  const snap = v.ceo.find(f => f.type === 'snapshot');
+  assert.deepEqual(snap.ends.map(e => [e.reason, e.tool]), [['no-viewer', 'Bash']], 'the snapshot carries today\'s endings');
+  assert.ok(Number.isFinite(snap.startedAt));
+  const p = ask(port, permInput(), 300);
+  await p;
+  const out = serverOut.get(port)();
+  assert.match(out, /대표실: Bash \(0f1e2d3c\) expired after 0s/);
+  v.close();
+  const line = fs.readFileSync(path.join(logs, 'ceo-decisions.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l)).at(-1);
+  assert.deepEqual([line.reason, line.wait], ['timeout', 300], 'the log line keeps the wait for replay after a restart');
+});
+
+test('dashboard instructions: at most 8 in a row per session (reset by a typed prompt / SessionEnd); Stop wait ≤ 320 s', async () => {
+  assert.equal(INSTRUCT_CAP, 8); assert.equal(STOP_WAIT_MAX, 320000); assert.equal(WAIT_DEFAULT, 120000);
+  const frames = [];
+  const r = new Relay({ broadcast: f => frames.push(f) });
+  const a0 = r.ask(stopInput(), 540000);
+  assert.equal(a0.item.expiresAt - a0.item.createdAt, 320000, 'Stop wait clamped so curl (wait+5 s) stays under the 330 s hook timeout');
+  r.answer(a0.id, { text: 'go 1' });
+  for (let i = 2; i <= INSTRUCT_CAP; i++) { const a = r.ask(stopInput(), 1000); assert.ok(a.id, `#${i} held`); r.answer(a.id, { text: `go ${i}` }); }
+  assert.deepEqual(r.ask(stopInput(), 1000), { none: 'cap' }, 'the 9th Stop in a row is not held');
+  assert.deepEqual([frames.at(-1).type, frames.at(-1).end.reason, frames.at(-1).end.tool], ['ended', 'cap', 'Stop'], 'the card learns why');
+  const other = r.ask(stopInput({ session_id: 'another-session' }), 1000);
+  assert.ok(other.id, 'the cap is per session'); r.release(other.id);
+  const rel = r.ask(stopInput(), 1000);
+  assert.deepEqual(rel, { none: 'cap' });
+  r.observe({ ev: 'UserPromptSubmit', sid: SID, ts: new Date().toISOString() });
+  const again = r.ask(stopInput(), 1000);
+  assert.ok(again.id, 'a prompt typed in the terminal resets the count'); r.release(again.id);
+  const nr = r.ask(stopInput(), 1000); r.release(nr.id);
+  assert.equal(r.instructs.get(SID) || 0, 0, 'a release (no instruction) does not count');
+  r.instructs.set(SID, 8); r.observe({ ev: 'SessionEnd', sid: SID, ts: new Date().toISOString() });
+  assert.equal(r.instructs.has(SID), false, 'SessionEnd resets too');
+  assert.equal(r.skip(stopInput(), 'unchecked').reason, 'unchecked', 'no caller check on this machine: recorded for the card');
+});
+
+test('OFFICE_TEST_ANCESTRY is honoured only under the test runner; a real start with it set keeps the real check', async () => {
+  assert.deepEqual(testAncestry({ OFFICE_TEST_ANCESTRY: 'Google Chrome,launchd', NODE_TEST_CONTEXT: 'child-v8' }), ['Google Chrome', 'launchd']);
+  assert.equal(testAncestry({ OFFICE_TEST_ANCESTRY: 'Google Chrome,launchd' }), null, 'no test runner: ignored');
+  assert.equal(testAncestry({}), null);
+  // run as main WITHOUT the test-runner marker: the server says it ignores the fake tree
+  const env = { ...process.env, OFFICE_TEST_ANCESTRY: 'Google Chrome,launchd' }; delete env.NODE_TEST_CONTEXT;
+  const p = spawn(process.execPath, [SERVER, '--port', '0', '--no-usage', '--logs', fs.mkdtempSync(path.join(tmp, 'anc-'))], { stdio: ['ignore', 'pipe', 'pipe'], env });
+  procs.push(p);
+  const out = await new Promise((resolve, reject) => {
+    let o = ''; const t = setTimeout(() => reject(new Error(o)), 5000);
+    p.stdout.on('data', b => { o += b; if (/http:\/\/127\.0\.0\.1:\d+/.test(o)) { clearTimeout(t); resolve(o); } });
+  });
+  assert.match(out, /OFFICE_TEST_ANCESTRY ignored \(only honoured under the test runner\)/);
+  const port = Number(/127\.0\.0\.1:(\d+)/.exec(out)[1]);
+  const v = await viewer(port);
+  const pr = ask(port, permInput(), 3000);
+  const f = await v.waitFor(x => x.type === 'ask');
+  const res = await answer(port, f.item.id, { behavior: 'allow' });
+  if (process.env.CLAUDECODE || /claude/i.test(String(process.env._ || ''))) assert.equal(res.status, 403, 'under Claude Code the real check refuses this test process');
+  else assert.ok([200, 403].includes(res.status));
+  await pr; v.close(); p.kill();
 });

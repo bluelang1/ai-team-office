@@ -145,7 +145,7 @@ Claude Code 가 사람에게 묻는 두 가지 — 권한 확인(`PermissionRequ
 
 ### 설치 (사용자가 직접, `~/.claude/settings.json`)
 
-`<office>` 는 이 폴더의 절대 경로. 플러그인으로 설치했다면 버전이 들어간 캐시 폴더(`~/.claude/plugins/cache/…/<version>/`) 대신 마켓플레이스 체크아웃 `~/.claude/plugins/marketplaces/ai-team-office/plugins/ai-team/office` 를 쓴다 — `claude plugin marketplace update` 가 그 자리에서 갱신하므로 업데이트 뒤에도 새 훅이 돈다(`/ai-team:ai-team-setup` 이 이렇게 써 준다). 훅 `timeout`(초) 은 **대기 시간/1000 + 5 이상**이어야 한다 — 스크립트의 curl `--max-time` 이 그 값이라 더 짧으면 Claude Code 가 훅을 먼저 죽이고, 그 뒤 대표실 답은 410 으로 거절된다. 기본 `OFFICE_RELAY_WAIT_MS=170000` → max-time 175 → `timeout` ≥ 175(아래 예시 180), 최대 540000 → ≥ 545, 질문용 60000 → ≥ 65. `OFFICE_RELAY_WAIT_MS` 는 1~7자리 10진수만 받는다(`060000` = 60000, 앞 0 은 8진수가 아님; 그 외·더 긴 값은 기본값). 기존 `PermissionRequest`/`PreToolUse` 배열이 있으면 항목을 **추가**한다.
+`<office>` 는 이 폴더의 절대 경로. 플러그인으로 설치했다면 버전이 들어간 캐시 폴더(`~/.claude/plugins/cache/…/<version>/`) 대신 마켓플레이스 체크아웃 `~/.claude/plugins/marketplaces/ai-team-office/plugins/ai-team/office` 를 쓴다 — `claude plugin marketplace update` 가 그 자리에서 갱신하므로 업데이트 뒤에도 새 훅이 돈다(`/ai-team:ai-team-setup` 이 이렇게 써 준다). 훅 `timeout`(초) 은 **대기 시간/1000 + 5 이상**이어야 한다 — 스크립트의 curl `--max-time` 이 그 값이라 더 짧으면 Claude Code 가 훅을 먼저 죽이고, 그 뒤 대표실 답은 410 으로 거절된다. 기본 `OFFICE_RELAY_WAIT_MS=120000`(2분) → max-time 125 → `timeout` ≥ 125(아래 예시 180), 최대 540000 → ≥ 545, 질문용 60000 → ≥ 65. `OFFICE_RELAY_WAIT_MS` 는 1~7자리 10진수만 받는다(`060000` = 60000, 앞 0 은 8진수가 아님; 그 외·더 긴 값은 기본값). 기존 `PermissionRequest`/`PreToolUse` 배열이 있으면 항목을 **추가**한다.
 
 ```json
 {
@@ -160,13 +160,14 @@ Claude Code 가 사람에게 묻는 두 가지 — 권한 확인(`PermissionRequ
 }
 ```
 
-- 필요: `bash`, `curl`, `jq` (node 기동 비용 없음). 환경변수: `OFFICE_PORT`(4747), `OFFICE_RELAY_WAIT_MS`(170000, 최대 540000), `OFFICE_RELAY_QUESTION_WAIT_MS`(질문만 따로, 기본은 앞 값), `OFFICE_RELAY_DISABLE=1`(끄기).
-- 대안: 공식 `http` 훅 — `{ "type": "http", "url": "http://127.0.0.1:4747/relay/hook?waitMs=170000", "timeout": 180 }`. 같은 롱폴이고 응답 본문이 곧 훅 JSON(결정 없으면 `{}`). 다만 서버가 꺼져 있으면 Claude Code 가 "non-blocking error" 로 처리(트랜스크립트에 훅 오류 표시)하므로 기본은 스크립트(접속 1초 실패 시 조용히 빠짐)다. `allowedHttpHookUrls` 를 쓰는 환경이면 이 URL 을 허용 목록에 넣어야 한다.
+- 필요: `bash`, `curl`, `jq` (node 기동 비용 없음). 환경변수: `OFFICE_PORT`(4747), `OFFICE_RELAY_WAIT_MS`(120000 = 2분, 최대 540000; 대시보드는 주로 지켜보는 곳이고 승인은 보조라 짧게 둔다), `OFFICE_RELAY_QUESTION_WAIT_MS`(질문만 따로, 기본은 앞 값), `OFFICE_RELAY_DISABLE=1`(끄기).
+- 대안: 공식 `http` 훅 — `{ "type": "http", "url": "http://127.0.0.1:4747/relay/hook?waitMs=120000", "timeout": 180 }`. 같은 롱폴이고 응답 본문이 곧 훅 JSON(결정 없으면 `{}`). 다만 서버가 꺼져 있으면 Claude Code 가 "non-blocking error" 로 처리(트랜스크립트에 훅 오류 표시)하므로 기본은 스크립트(접속 1초 실패 시 조용히 빠짐)다. `allowedHttpHookUrls` 를 쓰는 환경이면 이 URL 을 허용 목록에 넣어야 한다.
 
 ### 경합 규칙 (먼저 답한 쪽이 이긴다)
 
 | 상황 | 결과 |
 |---|---|
+| 대표실에서 "터미널에서 답할게요" | 결정 없이 지금 풀기(`/relay/release`): 훅 빈 출력 → 터미널 프롬프트가 바로 뜬다. 카드는 남아 "터미널로 넘겼어요" 를 보이고 "터미널로" 로 그 탭을 앞으로. ("돌려보내기" 는 같은 풀기 + 대시보드에서 숨기기) |
 | 대표실에서 승인/거부/답변 | 훅이 결정 JSON 출력. 카드 `answered`(by dashboard). 두 번째 답은 409 |
 | 대기 시간 초과 | 훅 출력 없음 → 터미널 프롬프트. 카드 `resolved`(by terminal, reason timeout) |
 | 터미널에서 먼저 답함 | Claude Code 가 훅을 끝내면 연결이 끊겨 `withdrawn`. 훅이 남아 있어도 같은 세션·같은 에이전트의 `PostToolUse`/`PostToolUseFailure`/`PermissionDenied`(같은 도구·같은 target, 질문은 같은 `tool_use_id`), 그 세션의 `UserPromptSubmit`/`SessionEnd`, 그 에이전트의 `Stop`/`SubagentStop` 이 office-events 에 찍히면 `resolved`(by terminal) 로 닫고 훅은 빈 출력 |
@@ -190,10 +191,23 @@ Claude Code 가 사람에게 묻는 두 가지 — 권한 확인(`PermissionRequ
 
 ### 정직한 한계
 
-- 할 수 있는 건 **그 질문에 대한 답**뿐이다: 권한 허용/거부(+거부 사유), 질문 보기 선택. 새 지시·자유 프롬프트를 세션에 넣는 통로는 Claude Code 에 없다. 그건 터미널(또는 Remote Control)에서.
+- 할 수 있는 건 **그 질문에 대한 답**뿐이다: 권한 허용/거부(+거부 사유), 질문 보기 선택. 일하는 중인 세션에 새 지시·자유 프롬프트를 끼워 넣는 통로는 Claude Code 에 없다. 예외는 묻는 보고로 **멈추는 순간**의 다음 지시(아래 Stop 중계, 선택 설치)뿐이다. 그 밖은 터미널(또는 Remote Control)에서.
 - "허용" 은 이번 한 번만이다. `updatedPermissions`(규칙 추가·모드 변경)와 `updatedInput`(명령 바꿔치기)은 서버도 스크립트도 절대 보내지 않는다.
 - 공식 문서: 훅의 allow 는 **deny/ask 권한 규칙을 덮어쓰지 못한다**. 설정의 deny 규칙은 그대로 막는다.
 - 터미널 쪽 해소 감지는 office-events 훅 줄에 의존한다(초 단위 ts, 항목 생성 초 이후 줄만). `PostToolUse` 류는 양쪽에 `tool_use_id` 가 있으면 그것만, 없으면 **null 이 아닌 같은 target** 일 때만 맞춘다. 그 훅이 없으면 타임아웃·연결 끊김으로만 정리된다.
+
+## 대표실에서 다음 지시 보내기 (Stop 중계, 선택 설치)
+
+결정·질문으로 끝난 보고(예: "다음 결정: PR #23을 머지할지 정해 주세요.")에 대시보드에서 바로 다음 지시를 보낸다. `hooks/ceo-stop.sh` 를 `Stop` 훅으로 등록하면, 메인 세션의 마지막 보고가 묻는 보고(대시보드와 같은 `public/ceo.js reportAsks` 휴리스틱, 서버가 판단)이고 **보이는** 대시보드 탭이 있을 때만 훅이 기다린다. 대표실 보고 카드(와 크게 보기 서랍)에 입력칸·빠른 칩(진행해 주세요·머지해 주세요·보류해 주세요)·보내기(Ctrl/⌘+Enter)·"터미널에서 할게요"·남은 시간이 뜬다. 보내면 훅이 `{"decision":"block","reason":"<보낸 글>"}` 을 출력하고, Claude Code 는 공식 문서대로 멈추지 않고 그 reason 을 받아 이어서 일한다(사용자 프롬프트가 아니라 Stop 훅 피드백으로 들어가므로 `UserPromptSubmit` 은 생기지 않는다).
+
+- **설치**(직접 또는 `/ai-team:ai-team-setup` (a2)): `~/.claude/settings.json` 의 `hooks.Stop` 에 `{ "hooks": [ { "type": "command", "command": "<office>/hooks/ceo-stop.sh", "timeout": 330 } ] }` 를 **추가**한다. `timeout` 은 대기/1000 + 5 이상(기본 대기 120000 → ≥ 125, 최대 320000 → ≥ 325).
+- **기다리는 동안 터미널에는 Stop 훅이 실행 중으로 보이고 그 세션에 입력할 수 없다**(최대 대기 시간, 기본 2분). 터미널에서 직접 치려면 Esc 로 훅을 멈추거나, 카드의 "터미널에서 할게요"(결정 없이 지금 풀기)를 누르거나, 시간이 지나기를 기다린다. 그래서 보이는 탭이 있을 때만 붙잡고, 마지막 보이는 탭이 숨거나 닫히면 바로 푼다.
+- 붙잡지 않는 경우(훅은 출력 없이 exit 0 → 평소처럼 멈춤): 대시보드 꺼짐(~1초), 보이는 탭 없음, 보고가 묻지 않음, 하위 에이전트, `--redact` 와 무관하게 보고 본문이 없음, 시간 초과, 오류, `OFFICE_RELAY_DISABLE=1`.
+- 환경변수: `OFFICE_RELAY_STOP_WAIT_MS`(120000, 100..**320000**: 스크립트와 서버 모두 자른다. curl 은 대기+5초까지 기다리므로 최대 325초 < 설정이 쓰는 훅 `timeout` 330초 — 둘은 짝이다. `timeout` 을 바꾸면 대기도 그 아래로), `OFFICE_PORT`, `OFFICE_RELAY_DISABLE=1`(끄기, 설정은 그대로).
+- **연속 지시 8번 제한(서버가 강제)**: Claude Code 는 Stop 훅이 연속 8번 이어 가게 하면 다음 block 을 무시하고 턴을 끝낸다. 그래서 서버는 세션마다 대시보드 지시 수를 세어 8번째 뒤로는 붙잡지 않고 카드에 "연속 지시는 8번까지예요 · 터미널에서 이어 주세요" 를 보인다. 터미널에서 프롬프트를 치거나(`UserPromptSubmit`) 세션이 끝나면 다시 0.
+- **macOS 전용**: 지시는 세션의 다음 입력이 되므로 호출 프로세스 확인(lsof/ps 로 Claude Code 프로세스 트리 거부)이 되는 곳에서만 쓴다. 다른 OS 이거나 확인 도구를 못 쓰면 훅이 붙잡지 않고(`unchecked`), 그래도 온 지시 답은 403 이며, 카드는 "이 컴퓨터에서는 대시보드 지시를 쓸 수 없어요" 라고 말한다.
+- 끄기: `OFFICE_RELAY_DISABLE=1`, 또는 `hooks.Stop` 에서 `ceo-stop.sh` 항목만 지운다(`/ai-team:ai-team-setup` 의 Undo).
+- 보안·정직: 답은 다른 중계와 같은 `POST /relay/answer`(같은 출처 + 뷰어 토큰 + Claude Code 프로세스 트리 거부, 409/404/410)로만 오고 `{text}` 만 받는다(1..2000자, `\n` 외 제어문자는 공백). 훅은 응답에서 `.decision.text` 하나만 꺼내 같은 정리를 다시 해 JSON 을 스스로 만든다. 지시로 이어진 뒤의 Stop(`stop_hook_active: true`)도 다시 붙잡을 수 있다 — 이어짐마다 사람이 쳤기 때문. (연속 8번 제한은 위 항목.) 훅이 설치되지 않았거나 시간이 지난 보고에는 가짜 입력칸 대신 흐린 한 줄("대시보드 지시는 설치 후 쓸 수 있어요 · 터미널로")만 보인다. 결정 로그에는 `kind: "instruct"`, 보낸 글(`--redact` 면 `{instructed: true}`)이 남는다.
 
 ### `proj` 이름: office-events 훅 vs 사용량
 

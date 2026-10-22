@@ -51,7 +51,7 @@
               <div class="cal" id="cal" role="img"><i class="rings" aria-hidden="true"></i><span class="cal-ymd"></span><b class="cal-d"></b><span class="cal-w"></span></div>
               <canvas class="wclock" id="wclock" width="26" height="26" role="img" aria-label="벽시계"></canvas>
             </div>
-            <div class="ceo-boss"><canvas class="boss" id="boss" width="24" height="32" aria-hidden="true"></canvas><span class="tag ceo-tag">대표</span></div>
+            <button type="button" class="ceo-boss" id="ceo-boss" aria-haspopup="dialog" title="대표실 대기 목록 보기" aria-label="대표실 대기 목록 보기"><canvas class="boss" id="boss" width="24" height="32" aria-hidden="true"></canvas><span class="tag ceo-tag">대표</span></button>
             <div class="ceo-desk" aria-hidden="true"><i class="dtop"></i><i class="dleg"></i><i class="dped"></i><i class="laptop"></i><i class="mugd"></i></div>
             <div class="ceo-line" id="ceo-line"></div>
           </div>
@@ -91,6 +91,36 @@
     </div>
   </div>
   <div class="card-pop px" id="pop" hidden role="dialog" aria-label="캐릭터 정보"></div>
+  <aside class="reader px" id="reader" hidden role="dialog" aria-labelledby="rd-t" tabindex="-1">
+    <header class="chest-h"><button type="button" class="chipbtn" data-r="back" id="rd-back" hidden>← 목록</button><h2 id="rd-t">크게 보기</h2><span class="sub" id="rd-sub"></span>
+      <span class="prio low" id="rd-past" hidden title="이 카드는 대표실 줄에서 이미 나갔어요. 마지막으로 받은 내용이에요">지난 보고</span><button type="button" class="chipbtn" data-r="close">닫기</button></header>
+    <div class="rd-card" id="rd-card">
+      <div class="rd-head" id="rd-head"></div>
+      <div class="rd-tools" role="toolbar" aria-label="글자 크기">
+        <span class="rd-lbl" id="rd-lbl">내용</span><span class="rd-gap"></span>
+        <button type="button" class="chipbtn" data-r="smaller" aria-label="글자 작게">A−</button><button type="button" class="chipbtn" data-r="bigger" aria-label="글자 크게">A+</button>
+      </div>
+      <section class="rd-decide" id="rd-decide" hidden aria-label="결정이 필요한 부분">
+        <p class="rd-dh"><b>결정이 필요해 보여요</b> <span class="est" title="보고 끝부분의 질문·결정 문구로 추정했어요 (관측 아님)">추정</span></p>
+        <div id="rd-dl"></div>
+      </section>
+      <div class="rd-body" id="rd-body" tabindex="0" role="region" aria-label="내용"></div>
+      <div class="rd-act" id="rd-act"></div>
+    </div>
+    <div class="rd-list" id="rd-list" hidden>
+      <div class="rd-filter" role="group" aria-label="보기">
+        <button type="button" class="chipbtn" data-f="need" aria-pressed="false">답 필요만</button><button type="button" class="chipbtn" data-f="all" aria-pressed="true">전체</button>
+        <span class="rd-sidchip" id="rd-sidchip" hidden><span></span><button type="button" aria-label="세션 필터 지우기" title="세션 필터 지우기">✕</button></span>
+        <span class="rd-gap"></span><span class="rd-hint">행을 누르면 카드가 열려요</span>
+      </div>
+      <div class="rd-selbar" id="rd-selbar" hidden role="region" aria-label="선택한 요청"></div>
+      <button type="button" class="rd-fresh" id="rd-fresh" hidden></button>
+      <div class="rd-tw" id="rd-tw" tabindex="-1">
+        <table class="rd-tbl"><thead id="rd-thead"></thead><tbody id="rd-tbody"></tbody></table>
+        <p class="rd-empty" id="rd-empty" hidden>대기 중인 요청이 없어요</p>
+      </div>
+    </div>
+  </aside>
   <div class="tip" id="tip" hidden role="tooltip"></div>
   <div class="toast" id="toast" hidden role="status"></div>
   <footer class="ticker"><span class="ticker-label">이벤트</span><ol id="ticker"></ol></footer>

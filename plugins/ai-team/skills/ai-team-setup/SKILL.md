@@ -31,7 +31,7 @@ After the rules block is handled (installed, already up to date, or declined), o
 
 Write `<ABS>` into settings as the expanded absolute path (as before), and tell the user which of the two was used.
 
-**Existing entries on a versioned path (offer, then rewrite).** Before (a) and (b), look for commands in `~/.claude/settings.json` that contain `ceo-relay.sh` (in `hooks.PermissionRequest` / `hooks.PreToolUse`) or `statusline-tee` (in `statusLine.command`) and whose path contains `/plugins/cache/`. If any are found and `<ABS>` is the stable path:
+**Existing entries on a versioned path (offer, then rewrite).** Before (a) and (b), look for commands in `~/.claude/settings.json` that contain `ceo-relay.sh` (in `hooks.PermissionRequest` / `hooks.PreToolUse`) or `ceo-stop.sh` (in `hooks.Stop`) or `statusline-tee` (in `statusLine.command`) and whose path contains `/plugins/cache/`. If any are found and `<ABS>` is the stable path:
 - Show each old command and the new one (only the path part changes: inside the quoted path token, replace only the part from its start through `/plugins/cache/ai-team-office/ai-team/<version>` with `<ABS>`, e.g. `"<old>/office/hooks/ceo-relay.sh"` → `"<ABS>/office/hooks/ceo-relay.sh"`; keep env prefixes such as `OFFICE_RELAY_QUESTION_WAIT_MS=60000`, quoting, `timeout` and `matcher` unchanged).
 - Ask "Rewrite these to the stable path so they follow plugin updates? (yes/no)". On yes: back up first (once per setup run, before its first settings change: `cp ~/.claude/settings.json ~/.claude/settings.json.bak-ai-team-$(date +%Y%m%d%H%M%S)`; later steps in the same run reuse that backup), change only those `command` strings in place (no new entries, no reordering, nothing else touched), then re-read and validate the JSON. Do **not** touch `~/.claude/logs/statusline/.previous-command` when rewriting `statusline-tee`.
 - Idempotent: commands already under `<ABS>` are left alone, and an entry rewritten here counts as installed for (a) / (b).
@@ -45,6 +45,16 @@ Show and, on yes, merge these two hook entries (idempotent: skip any entry whose
 
 - `hooks.PermissionRequest` += `{"matcher":"*","hooks":[{"type":"command","command":"OFFICE_RELAY_QUESTION_WAIT_MS=60000 \"<ABS>/office/hooks/ceo-relay.sh\"","timeout":180}]}`
 - `hooks.PreToolUse` += `{"matcher":"AskUserQuestion","hooks":[{"type":"command","command":"OFFICE_RELAY_QUESTION_WAIT_MS=60000 \"<ABS>/office/hooks/ceo-relay.sh\"","timeout":180}]}`
+
+### (a2) "대표실 지시 보내기" (Stop relay, optional, after (a))
+
+Explain: when a main session stops with a report that asks you something (e.g. "다음 결정: …를 정해 주세요"), the 대표실 card gets a box to type the next instruction; sending it makes Claude continue with that text (Stop hook `{"decision":"block","reason":…}`). It waits only while a dashboard tab is visible and only for reports that ask; while it waits (2 minutes by default) the terminal shows the Stop hook running and that session cannot take terminal input (Esc stops it, or press "터미널에서 할게요" on the card). `OFFICE_RELAY_DISABLE=1` turns it off. Needs `curl`, `jq` and a running dashboard.
+
+Show and, on yes, merge this entry (idempotent: skip if any `hooks.Stop` command already contains `ceo-stop.sh`, whatever its path), with `<ABS>` the path chosen above:
+
+- `hooks.Stop` += `{"hooks":[{"type":"command","command":"\"<ABS>/office/hooks/ceo-stop.sh\"","timeout":330}]}`
+
+The `timeout` (330 s) pairs with the hook's maximum wait: `OFFICE_RELAY_STOP_WAIT_MS` defaults to 120000 and is clamped to 320000 (curl waits up to wait + 5 s = 325 s < 330 s). Keep that pairing if you change either. The dashboard offers at most 8 instructions in a row per session (Claude Code's own stop-hook continuation cap) and only on macOS (it needs the caller-process check).
 
 ### (b) "플랜 한도 표시" (plan limits display)
 
@@ -60,5 +70,5 @@ On yes:
 
 Offer this when the user asks to remove the extras. Back up `~/.claude/settings.json` first, then:
 
-- **Relay**: remove only the entries whose command contains `ceo-relay.sh` (whatever its path: stable, versioned cache or a local checkout) from `hooks.PermissionRequest` and `hooks.PreToolUse` (delete an array only if it becomes empty). Alternatively set `OFFICE_RELAY_DISABLE=1` to disable it without editing settings.
+- **Relay**: remove only the entries whose command contains `ceo-relay.sh` (whatever its path: stable, versioned cache or a local checkout) from `hooks.PermissionRequest` and `hooks.PreToolUse`, and those containing `ceo-stop.sh` from `hooks.Stop` (delete an array only if it becomes empty). Alternatively set `OFFICE_RELAY_DISABLE=1` to disable both without editing settings.
 - **Plan limits** (only if `statusLine.command` contains `statusline-tee`, whatever its path): read `~/.claude/logs/statusline/.previous-command`; if non-empty, set `statusLine.command` back to it; if empty, remove the `statusLine` key. Then delete `.previous-command`. Captured JSON files in `~/.claude/logs/statusline/` can be deleted too.

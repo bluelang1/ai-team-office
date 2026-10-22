@@ -56,3 +56,13 @@
 - `/ai-team:office restart`; `start.sh` stops a dashboard started by another plugin version (node process only), so restart after an update runs the new version
 - Setup writes hooks via the version-independent marketplace path and offers to move existing versioned-cache hooks there (timestamped backup)
 - New screenshots (sim data)
+
+## 0.2.9 — 2026-10-22
+- CEO room: every card opens whole in a right-side drawer (크게 보기): big reading area with decision highlight, lists, links, A−/A+, and the card's own actions
+- CEO room list: click the 대표 or +N for a sortable table (온 시각·기다린 시간·종류·프로젝트·누가·내용), 답 필요만/전체 filter, multi-select bulk 돌려보내기 (hides only, never answers)
+- Reports that end by asking (다음 결정 …, 할까요?) stay as 결정 대기 (marked 추정) instead of expiring after 90s; capped at 3h
+- Opt-in `ceo-stop.sh` Stop hook: send an instruction to a session from the dashboard (same-origin + viewer token + not-Claude caller; 8 in a row per session; macOS only)
+- "터미널에서 답할게요" hands a held request to the terminal at once; cards say why there are no buttons (expired after Ns, no dashboard, relay not installed)
+- Relay default wait 170s → 120s; Stop wait capped at 320s
+- Session grouping (×N) only when the 대표실 overflows; hover needs a 150ms rest to switch people, the open card wins
+- Fix: 전체 보기 no longer draws a cut-off 대표실; `OFFICE_TEST_ANCESTRY` only honoured under `node --test`
